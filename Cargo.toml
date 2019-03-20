@@ -1,0 +1,9 @@
+[package]
+name = "sdc-parser"
+version = "0.1.0"
+authors = ["hatta"]
+edition = "2018"
+
+[dependencies]
+combine          = "*"
+combine-language = "*"
