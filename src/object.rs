@@ -133,7 +133,7 @@ where
         attempt(clock),
     );
     env.brackets(command.with(many(choice(args))))
-        .map(|xs: Vec<ObjectArg>| {
+        .map(|xs: Vec<_>| {
             let mut level_sensitive = false;
             let mut edge_triggered = false;
             let mut clock = None;
@@ -201,7 +201,7 @@ where
         attempt(clock),
     );
     env.brackets(command.with(many(choice(args))))
-        .map(|xs: Vec<ObjectArg>| {
+        .map(|xs: Vec<_>| {
             let mut level_sensitive = false;
             let mut edge_triggered = false;
             let mut clock = None;
@@ -313,7 +313,7 @@ where
         attempt(master_slave),
     );
     env.brackets(command.with(many(choice(args))))
-        .map(|xs: Vec<ObjectArg>| {
+        .map(|xs: Vec<_>| {
             let mut no_hierarchy = false;
             let mut hsc = None;
             let mut clock = None;
@@ -456,7 +456,7 @@ where
         patterns,
     );
     env.brackets(command.with(many(choice(args))))
-        .map(|xs: Vec<ObjectArg>| {
+        .map(|xs: Vec<_>| {
             let mut hierarchical = false;
             let mut hsc = None;
             let mut regexp = false;
@@ -548,7 +548,7 @@ where
     .map(|x| ObjectArg::Patterns(x));
     let args = (attempt(regexp), attempt(nocase), patterns);
     env.brackets(command.with(many(choice(args))))
-        .map(|xs: Vec<ObjectArg>| {
+        .map(|xs: Vec<_>| {
             let mut regexp = false;
             let mut nocase = false;
             let mut patterns = vec![];
@@ -624,7 +624,7 @@ where
     .map(|x| ObjectArg::Patterns(x));
     let args = (attempt(hsc), attempt(regexp), attempt(nocase), patterns);
     env.brackets(command.with(many(choice(args))))
-        .map(|xs: Vec<ObjectArg>| {
+        .map(|xs: Vec<_>| {
             let mut hsc = None;
             let mut regexp = false;
             let mut nocase = false;
@@ -689,7 +689,7 @@ where
     .map(|x| ObjectArg::Patterns(x));
     let args = (attempt(regexp), attempt(nocase), patterns);
     env.brackets(command.with(many(choice(args))))
-        .map(|xs: Vec<ObjectArg>| {
+        .map(|xs: Vec<_>| {
             let mut regexp = false;
             let mut nocase = false;
             let mut patterns = vec![];
@@ -750,7 +750,7 @@ where
     .map(|x| ObjectArg::Patterns(x));
     let args = (attempt(regexp), attempt(nocase), patterns);
     env.brackets(command.with(many(choice(args))))
-        .map(|xs: Vec<ObjectArg>| {
+        .map(|xs: Vec<_>| {
             let mut regexp = false;
             let mut nocase = false;
             let mut patterns = vec![];
@@ -830,7 +830,7 @@ where
         patterns,
     );
     env.brackets(command.with(many(choice(args))))
-        .map(|xs: Vec<ObjectArg>| {
+        .map(|xs: Vec<_>| {
             let mut hierarchical = false;
             let mut hsc = None;
             let mut regexp = false;
@@ -922,7 +922,7 @@ where
         patterns,
     );
     env.brackets(command.with(many(choice(args))))
-        .map(|xs: Vec<ObjectArg>| {
+        .map(|xs: Vec<_>| {
             let mut hierarchical = false;
             let mut hsc = None;
             let mut regexp = false;
@@ -995,7 +995,7 @@ where
     .map(|x| ObjectArg::Patterns(x));
     let args = (attempt(regexp), attempt(nocase), patterns);
     env.brackets(command.with(many(choice(args))))
-        .map(|xs: Vec<ObjectArg>| {
+        .map(|xs: Vec<_>| {
             let mut regexp = false;
             let mut nocase = false;
             let mut patterns = vec![];

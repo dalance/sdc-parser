@@ -1,9 +1,15 @@
 [package]
 name = "sdc-parser"
 version = "0.1.0"
-authors = ["hatta"]
+authors = ["dalance@gmail.com"]
+repository = "https://github.com/dalance/sdc-parser"
+keywords = []
+categories = []
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+description = ""
 edition = "2018"
 
 [dependencies]
-combine          = "*"
-combine-language = "*"
+combine          = "3.8.1"
+combine-language = "3.0.2"
