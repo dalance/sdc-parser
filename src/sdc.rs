@@ -1,9 +1,9 @@
 use crate::object::*;
-use combine::char::{alpha_num, letter, string};
+use crate::util::*;
+use combine::char::{space, string};
 use combine::error::{ParseError, ParseResult};
 use combine::parser::Parser;
-use combine::{attempt, choice, many, many1, one_of, optional, parser, satisfy, Stream};
-use combine_language::{Identifier, LanguageDef, LanguageEnv};
+use combine::{attempt, choice, many, many1, none_of, optional, parser, token, Stream};
 
 // -----------------------------------------------------------------------------
 
@@ -18,12 +18,14 @@ pub struct Sdc {
 /// Command
 #[derive(Debug, PartialEq)]
 pub enum Command {
+    LineBreak,
     Comment(String),
     CreateClock(CreateClock),
     CreateGeneratedClock(CreateGeneratedClock),
     CreateVoltageArea(CreateVoltageArea),
     CurrentInstance(CurrentInstance),
     GroupPath(GroupPath),
+    Set(Set),
     SetCaseAnalysis(SetCaseAnalysis),
     SetClockGatingCheck(SetClockGatingCheck),
     SetClockGroups(SetClockGroups),
@@ -57,6 +59,7 @@ pub enum Command {
     SetMaxTransition(SetMaxTransition),
     SetMinCapacitance(SetMinCapacitance),
     SetMinDelay(SetMinDelay),
+    SetMinPorosity(SetMinPorosity),
     SetMinPulseWidth(SetMinPulseWidth),
     SetMulticyclePath(SetMulticyclePath),
     SetOperatingConditions(SetOperatingConditions),
@@ -96,7 +99,7 @@ enum CommandArg {
     Clocks(Object),
     Combinational,
     Comment(String),
-    Coordinate(Object),
+    Coordinate(Vec<f64>),
     Current(UnitValue),
     Data,
     DataPath,
@@ -207,6 +210,7 @@ where
     let general_purpose_commands = (
         attempt(parser(current_instance)),
         attempt(parser(set_sdc_version)),
+        attempt(parser(set)),
         attempt(parser(set_units)),
     );
     let timing_constraints = (
@@ -250,6 +254,7 @@ where
         attempt(parser(set_max_fanout)),
         attempt(parser(set_max_transition)),
         attempt(parser(set_min_capacitance)),
+        attempt(parser(set_min_porosity)),
         attempt(parser(set_port_fanout_number)),
         attempt(parser(set_resistance)),
         attempt(parser(set_timing_derate)),
@@ -266,36 +271,54 @@ where
         attempt(parser(set_max_dynamic_power)),
         attempt(parser(set_max_leakage_power)),
     );
+    let other = (
+        attempt(parser(linebreak)),
+        attempt(parser(comment)),
+        attempt(parser(whitespace)),
+    );
     let items = (
         choice(general_purpose_commands),
         choice(timing_constraints),
         choice(environment_commands),
         choice(multivoltage_and_power_optimization_commands),
+        choice(other),
     );
     choice(items).parse_stream(input)
 }
 
-pub(crate) fn sdc_env<'a, I>() -> LanguageEnv<'a, I>
+// -----------------------------------------------------------------------------
+
+fn whitespace<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
-    I: 'a,
 {
-    LanguageEnv::new(LanguageDef {
-        ident: Identifier {
-            start: letter(),
-            rest: choice((alpha_num(), one_of("_/@^#.|:$*?".chars()))),
-            reserved: vec![],
-        },
-        op: Identifier {
-            start: satisfy(|_| false),
-            rest: satisfy(|_| false),
-            reserved: vec![],
-        },
-        comment_start: string("\\").map(|_| ()),
-        comment_end: string("\n").map(|_| ()),
-        comment_line: string("#").map(|_| ()),
-    })
+    let mut command = lex(space()).map(|_| Command::Whitespace);
+    command.parse_stream(input)
+}
+
+// -----------------------------------------------------------------------------
+
+fn linebreak<I>(input: &mut I) -> ParseResult<Command, I>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    let mut command = lex(string("\n").or(string("\r\n"))).map(|_| Command::LineBreak);
+    command.parse_stream(input)
+}
+
+// -----------------------------------------------------------------------------
+
+fn comment<I>(input: &mut I) -> ParseResult<Command, I>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    let mut command = token('#')
+        .and(many(none_of("\n".chars())))
+        .map(|(_, x)| Command::Comment(x));
+    command.parse_stream(input)
 }
 
 // -----------------------------------------------------------------------------
@@ -311,9 +334,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("current_instance");
-    let instance = env.identifier().map(|x| CommandArg::String(x));
+    let command = symbol("current_instance");
+    let instance = item().map(|x| CommandArg::String(x));
     let args = (attempt(instance),);
     command
         .with(many(choice(args)))
@@ -349,9 +371,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set").with(env.symbol("sdc_version"));
-    let version = env.float().map(|x| Command::SetSdcVersion(x));
+    let command = symbol("set").with(symbol("sdc_version"));
+    let version = float().map(|x| Command::SetSdcVersion(x));
     command.with(version).parse_stream(input)
 }
 
@@ -360,6 +381,45 @@ fn test_set_sdc_version() {
     let mut parser = parser(command);
     let tgt = "set sdc_version 2.1";
     assert_eq!(Command::SetSdcVersion(2.1), parser.parse(tgt).unwrap().0);
+}
+
+// -----------------------------------------------------------------------------
+
+/// A type containing information of `set`
+#[derive(Debug, Default, PartialEq)]
+pub struct Set {
+    pub variable_name: String,
+    pub value: Object,
+}
+
+fn set<I>(input: &mut I) -> ParseResult<Command, I>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    let mut command = symbol("set")
+        .with(item())
+        .and(parser(object))
+        .map(|(x, y)| {
+            Command::Set(Set {
+                variable_name: x,
+                value: y,
+            })
+        });
+    command.parse_stream(input)
+}
+
+#[test]
+fn test_set() {
+    let mut parser = parser(command);
+    let tgt = "set a b";
+    assert_eq!(
+        Command::Set(Set {
+            variable_name: String::from("a"),
+            value: Object::String(vec![String::from("b")])
+        }),
+        parser.parse(tgt).unwrap().0
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -387,16 +447,13 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let mut unit_value = optional(env.float())
-        .and(env.identifier())
-        .map(|(x, y)| match x {
-            Some(x) => UnitValue { value: x, unit: y },
-            None => UnitValue {
-                value: 1.0,
-                unit: y,
-            },
-        });
+    let mut unit_value = optional(float()).and(item()).map(|(x, y)| match x {
+        Some(x) => UnitValue { value: x, unit: y },
+        None => UnitValue {
+            value: 1.0,
+            unit: y,
+        },
+    });
     unit_value.parse_stream(input)
 }
 
@@ -405,30 +462,23 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_units");
-    let capacitance = env
-        .symbol("-capacitance")
+    let command = attempt(symbol("set_units")).or(symbol("set_unit"));
+    let capacitance = symbol("-capacitance")
         .with(parser(unit_value))
         .map(|x| CommandArg::Capacitance(x));
-    let resistance = env
-        .symbol("-resistance")
+    let resistance = symbol("-resistance")
         .with(parser(unit_value))
         .map(|x| CommandArg::Resistance(x));
-    let time = env
-        .symbol("-time")
+    let time = symbol("-time")
         .with(parser(unit_value))
         .map(|x| CommandArg::Time(x));
-    let voltage = env
-        .symbol("-voltage")
+    let voltage = symbol("-voltage")
         .with(parser(unit_value))
         .map(|x| CommandArg::VoltageUV(x));
-    let current = env
-        .symbol("-current")
+    let current = symbol("-current")
         .with(parser(unit_value))
         .map(|x| CommandArg::Current(x));
-    let power = env
-        .symbol("-power")
+    let power = symbol("-power")
         .with(parser(unit_value))
         .map(|x| CommandArg::Power(x));
     let args = (
@@ -525,24 +575,17 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("create_clock");
-    let period = env
-        .symbol("-period")
-        .with(env.float())
+    let command = symbol("create_clock");
+    let period = symbol("-period")
+        .with(float())
         .map(|x| CommandArg::Period(x));
-    let name = env
-        .symbol("-name")
-        .with(env.identifier())
-        .map(|x| CommandArg::Name(x));
-    let waveform = env
-        .symbol("-waveform")
-        .with(env.braces(many1(env.float())))
+    let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
+    let waveform = symbol("-waveform")
+        .with(braces(many1(float())))
         .map(|x| CommandArg::Waveform(x));
-    let add = env.symbol("-add").map(|_| CommandArg::Add);
-    let comment = env
-        .symbol("-comment")
-        .with(env.string_literal())
+    let add = symbol("-add").map(|_| CommandArg::Add);
+    let comment = symbol("-comment")
+        .with(item())
         .map(|x| CommandArg::Comment(x));
     let source_objects = parser(object).map(|x| CommandArg::Object(x));
     let args = (
@@ -573,7 +616,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let period = period.unwrap();
+            let period = period.expect("create_clock:period");
             Command::CreateClock(CreateClock {
                 period,
                 name,
@@ -628,48 +671,34 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("create_generated_clock");
-    let name = env
-        .symbol("-name")
-        .with(env.identifier())
-        .map(|x| CommandArg::Name(x));
-    let source = env
-        .symbol("-source")
+    let command = symbol("create_generated_clock");
+    let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
+    let source = symbol("-source")
         .with(parser(object))
         .map(|x| CommandArg::SourceObj(x));
-    let edges = env
-        .symbol("-edges")
-        .with(env.braces(many1(env.float())))
+    let edges = symbol("-edges")
+        .with(braces(many1(float())))
         .map(|x| CommandArg::Edges(x));
-    let divide_by = env
-        .symbol("-divide_by")
-        .with(env.float())
+    let divide_by = symbol("-divide_by")
+        .with(float())
         .map(|x| CommandArg::DivideBy(x));
-    let multiply_by = env
-        .symbol("-multiply_by")
-        .with(env.float())
+    let multiply_by = symbol("-multiply_by")
+        .with(float())
         .map(|x| CommandArg::MultiplyBy(x));
-    let duty_cycle = env
-        .symbol("-duty_cycle")
-        .with(env.float())
+    let duty_cycle = symbol("-duty_cycle")
+        .with(float())
         .map(|x| CommandArg::DutyCycle(x));
-    let invert = env.symbol("-invert").map(|_| CommandArg::Invert);
-    let edge_shift = env
-        .symbol("-edge_shift")
-        .with(env.braces(many1(env.float())))
+    let invert = symbol("-invert").map(|_| CommandArg::Invert);
+    let edge_shift = symbol("-edge_shift")
+        .with(braces(many1(float())))
         .map(|x| CommandArg::EdgeShift(x));
-    let add = env.symbol("-add").map(|_| CommandArg::Add);
-    let master_clock = env
-        .symbol("-master_clock")
+    let add = symbol("-add").map(|_| CommandArg::Add);
+    let master_clock = symbol("-master_clock")
         .with(parser(object))
         .map(|x| CommandArg::MasterClock(x));
-    let combinational = env
-        .symbol("-combinational")
-        .map(|_| CommandArg::Combinational);
-    let comment = env
-        .symbol("-comment")
-        .with(env.string_literal())
+    let combinational = symbol("-combinational").map(|_| CommandArg::Combinational);
+    let comment = symbol("-comment")
+        .with(item())
         .map(|x| CommandArg::Comment(x));
     let source_objects = parser(object).map(|x| CommandArg::Object(x));
     let args = (
@@ -721,8 +750,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let source = source.unwrap();
-            let source_objects = source_objects.unwrap();
+            let source = source.expect("create_generated_clock:source");
+            let source_objects = source_objects.expect("create_generated_clock:source_objects");
             Command::CreateGeneratedClock(CreateGeneratedClock {
                 name,
                 source,
@@ -791,56 +820,41 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("group_path");
-    let name = env
-        .symbol("-name")
-        .with(env.identifier())
-        .map(|x| CommandArg::Name(x));
-    let default = env.symbol("-default").map(|_| CommandArg::Default);
-    let weight = env
-        .symbol("-weight")
-        .with(env.float())
+    let command = symbol("group_path");
+    let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
+    let default = symbol("-default").map(|_| CommandArg::Default);
+    let weight = symbol("-weight")
+        .with(float())
         .map(|x| CommandArg::Weight(x));
-    let from = env
-        .symbol("-from")
+    let from = symbol("-from")
         .with(parser(object))
         .map(|x| CommandArg::From(x));
-    let rise_from = env
-        .symbol("-rise_from")
+    let rise_from = symbol("-rise_from")
         .with(parser(object))
         .map(|x| CommandArg::RiseFrom(x));
-    let fall_from = env
-        .symbol("-fall_from")
+    let fall_from = symbol("-fall_from")
         .with(parser(object))
         .map(|x| CommandArg::FallFrom(x));
-    let to = env
-        .symbol("-to")
+    let to = symbol("-to")
         .with(parser(object))
         .map(|x| CommandArg::To(x));
-    let rise_to = env
-        .symbol("-rise_to")
+    let rise_to = symbol("-rise_to")
         .with(parser(object))
         .map(|x| CommandArg::RiseTo(x));
-    let fall_to = env
-        .symbol("-fall_to")
+    let fall_to = symbol("-fall_to")
         .with(parser(object))
         .map(|x| CommandArg::FallTo(x));
-    let through = env
-        .symbol("-through")
+    let through = symbol("-through")
         .with(parser(object))
         .map(|x| CommandArg::Through(x));
-    let rise_through = env
-        .symbol("-rise_through")
+    let rise_through = symbol("-rise_through")
         .with(parser(object))
         .map(|x| CommandArg::RiseThrough(x));
-    let fall_through = env
-        .symbol("-fall_through")
+    let fall_through = symbol("-fall_through")
         .with(parser(object))
         .map(|x| CommandArg::FallThrough(x));
-    let comment = env
-        .symbol("-comment")
-        .with(env.string_literal())
+    let comment = symbol("-comment")
+        .with(item())
         .map(|x| CommandArg::Comment(x));
     let args = (
         attempt(name),
@@ -953,20 +967,17 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_clock_gating_check");
-    let setup = env
-        .symbol("-setup")
-        .with(env.float())
+    let command = symbol("set_clock_gating_check");
+    let setup = symbol("-setup")
+        .with(float())
         .map(|x| CommandArg::SetupVal(x));
-    let hold = env
-        .symbol("-hold")
-        .with(env.float())
+    let hold = symbol("-hold")
+        .with(float())
         .map(|x| CommandArg::HoldVal(x));
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let high = env.symbol("-high").map(|_| CommandArg::High);
-    let low = env.symbol("-low").map(|_| CommandArg::Low);
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let high = symbol("-high").map(|_| CommandArg::High);
+    let low = symbol("-low").map(|_| CommandArg::Low);
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(setup),
@@ -1049,29 +1060,19 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_clock_groups");
-    let group = env
-        .symbol("-group")
+    let command = attempt(symbol("set_clock_groups")).or(symbol("set_clock_groups"));
+    let group = symbol("-group")
         .with(parser(object))
         .map(|x| CommandArg::Group(x));
-    let logically_exclusive = env
-        .symbol("-logically_exclusive")
-        .map(|_| CommandArg::LogicallyExclusive);
-    let physically_exclusive = env
-        .symbol("-physically_exclusive")
-        .map(|_| CommandArg::PhysicallyExclusive);
-    let asynchronous = env
-        .symbol("-asynchronous")
-        .map(|_| CommandArg::Asynchronous);
-    let allow_paths = env.symbol("-allow_paths").map(|_| CommandArg::AllowPaths);
-    let name = env
-        .symbol("-name")
-        .with(env.identifier())
-        .map(|x| CommandArg::Name(x));
-    let comment = env
-        .symbol("-comment")
-        .with(env.string_literal())
+    let logically_exclusive =
+        symbol("-logically_exclusive").map(|_| CommandArg::LogicallyExclusive);
+    let physically_exclusive =
+        symbol("-physically_exclusive").map(|_| CommandArg::PhysicallyExclusive);
+    let asynchronous = symbol("-asynchronous").map(|_| CommandArg::Asynchronous);
+    let allow_paths = symbol("-allow_paths").map(|_| CommandArg::AllowPaths);
+    let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
+    let comment = symbol("-comment")
+        .with(item())
         .map(|x| CommandArg::Comment(x));
     let args = (
         attempt(group),
@@ -1104,7 +1105,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let group = group.unwrap();
+            let group = group.expect("set_clock_groups:group");
             Command::SetClockGroups(SetClockGroups {
                 group,
                 logically_exclusive,
@@ -1159,21 +1160,19 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_clock_latency");
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let source = env.symbol("-source").map(|_| CommandArg::Source);
-    let dynamic = env.symbol("-dynamic").map(|_| CommandArg::Dynamic);
-    let late = env.symbol("-late").map(|_| CommandArg::Late);
-    let early = env.symbol("-early").map(|_| CommandArg::Early);
-    let clock = env
-        .symbol("-clock")
+    let command = symbol("set_clock_latency");
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let source = symbol("-source").map(|_| CommandArg::Source);
+    let dynamic = symbol("-dynamic").map(|_| CommandArg::Dynamic);
+    let late = symbol("-late").map(|_| CommandArg::Late);
+    let early = symbol("-early").map(|_| CommandArg::Early);
+    let clock = symbol("-clock")
         .with(parser(object))
         .map(|x| CommandArg::ClockObj(x));
-    let delay = env.float().map(|x| CommandArg::Value(x));
+    let delay = float().map(|x| CommandArg::Value(x));
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(rise),
@@ -1218,8 +1217,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay = delay.unwrap();
-            let object_list = object_list.unwrap();
+            let delay = delay.expect("set_clock_latency:delay");
+            let object_list = object_list.expect("set_clock_latency:object_list");
             Command::SetClockLatency(SetClockLatency {
                 rise,
                 fall,
@@ -1281,25 +1280,15 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_sense");
-    let r#type = env
-        .symbol("-type")
-        .with(env.identifier())
-        .map(|x| CommandArg::Type(x));
-    let non_unate = env.symbol("-non_unate").map(|_| CommandArg::NonUnate);
-    let positive = env.symbol("-positive").map(|_| CommandArg::Positive);
-    let negative = env.symbol("-negative").map(|_| CommandArg::Negative);
-    let clock_leaf = env.symbol("-clock_leaf").map(|_| CommandArg::ClockLeaf);
-    let stop_propagation = env
-        .symbol("-stop_propagation")
-        .map(|_| CommandArg::StopPropagation);
-    let pulse = env
-        .symbol("-pulse")
-        .with(env.identifier())
-        .map(|x| CommandArg::Pulse(x));
-    let clocks = env
-        .symbol("-clocks")
+    let command = symbol("set_sense");
+    let r#type = symbol("-type").with(item()).map(|x| CommandArg::Type(x));
+    let non_unate = symbol("-non_unate").map(|_| CommandArg::NonUnate);
+    let positive = symbol("-positive").map(|_| CommandArg::Positive);
+    let negative = symbol("-negative").map(|_| CommandArg::Negative);
+    let clock_leaf = symbol("-clock_leaf").map(|_| CommandArg::ClockLeaf);
+    let stop_propagation = symbol("-stop_propagation").map(|_| CommandArg::StopPropagation);
+    let pulse = symbol("-pulse").with(item()).map(|x| CommandArg::Pulse(x));
+    let clocks = symbol("-clocks")
         .with(parser(object))
         .map(|x| CommandArg::Clocks(x));
     let pin_list = parser(object).map(|x| CommandArg::Object(x));
@@ -1340,7 +1329,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let pin_list = pin_list.unwrap();
+            let pin_list = pin_list.expect("set_sense:pin_list");
             Command::SetSense(SetSense {
                 r#type,
                 non_unate,
@@ -1395,13 +1384,12 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_clock_transition");
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let transition = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_clock_transition");
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let transition = float().map(|x| CommandArg::Value(x));
     let clock_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(rise),
@@ -1431,8 +1419,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let transition = transition.unwrap();
-            let clock_list = clock_list.unwrap();
+            let transition = transition.expect("set_clock_transition:transition");
+            let clock_list = clock_list.expect("set_clock_transition:clock_list");
             Command::SetClockTransition(SetClockTransition {
                 rise,
                 fall,
@@ -1486,37 +1474,30 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_clock_uncertainty");
-    let from = env
-        .symbol("-from")
+    let command = symbol("set_clock_uncertainty");
+    let from = symbol("-from")
         .with(parser(object))
         .map(|x| CommandArg::From(x));
-    let rise_from = env
-        .symbol("-rise_from")
+    let rise_from = symbol("-rise_from")
         .with(parser(object))
         .map(|x| CommandArg::RiseFrom(x));
-    let fall_from = env
-        .symbol("-fall_from")
+    let fall_from = symbol("-fall_from")
         .with(parser(object))
         .map(|x| CommandArg::FallFrom(x));
-    let to = env
-        .symbol("-to")
+    let to = symbol("-to")
         .with(parser(object))
         .map(|x| CommandArg::To(x));
-    let rise_to = env
-        .symbol("-rise_to")
+    let rise_to = symbol("-rise_to")
         .with(parser(object))
         .map(|x| CommandArg::RiseTo(x));
-    let fall_to = env
-        .symbol("-fall_to")
+    let fall_to = symbol("-fall_to")
         .with(parser(object))
         .map(|x| CommandArg::FallTo(x));
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let setup = env.symbol("-setup").map(|_| CommandArg::Setup);
-    let hold = env.symbol("-hold").map(|_| CommandArg::Hold);
-    let uncertainty = env.float().map(|x| CommandArg::Value(x));
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let setup = symbol("-setup").map(|_| CommandArg::Setup);
+    let hold = symbol("-hold").map(|_| CommandArg::Hold);
+    let uncertainty = float().map(|x| CommandArg::Value(x));
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(from),
@@ -1564,7 +1545,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let uncertainty = uncertainty.unwrap();
+            let uncertainty = uncertainty.expect("set_clock_uncertainty:uncertainty");
             Command::SetClockUncertainty(SetClockUncertainty {
                 from,
                 rise_from,
@@ -1628,39 +1609,31 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_data_check");
-    let from = env
-        .symbol("-from")
+    let command = symbol("set_data_check");
+    let from = symbol("-from")
         .with(parser(object))
         .map(|x| CommandArg::From(x));
-    let to = env
-        .symbol("-to")
+    let to = symbol("-to")
         .with(parser(object))
         .map(|x| CommandArg::To(x));
-    let rise_from = env
-        .symbol("-rise_from")
+    let rise_from = symbol("-rise_from")
         .with(parser(object))
         .map(|x| CommandArg::RiseFrom(x));
-    let fall_from = env
-        .symbol("-fall_from")
+    let fall_from = symbol("-fall_from")
         .with(parser(object))
         .map(|x| CommandArg::FallFrom(x));
-    let rise_to = env
-        .symbol("-rise_to")
+    let rise_to = symbol("-rise_to")
         .with(parser(object))
         .map(|x| CommandArg::RiseTo(x));
-    let fall_to = env
-        .symbol("-fall_to")
+    let fall_to = symbol("-fall_to")
         .with(parser(object))
         .map(|x| CommandArg::FallTo(x));
-    let setup = env.symbol("-setup").map(|_| CommandArg::Setup);
-    let hold = env.symbol("-hold").map(|_| CommandArg::Hold);
-    let clock = env
-        .symbol("-clock")
+    let setup = symbol("-setup").map(|_| CommandArg::Setup);
+    let hold = symbol("-hold").map(|_| CommandArg::Hold);
+    let clock = symbol("-clock")
         .with(parser(object))
         .map(|x| CommandArg::ClockObj(x));
-    let value = env.float().map(|x| CommandArg::Value(x));
+    let value = float().map(|x| CommandArg::Value(x));
     let args = (
         attempt(from),
         attempt(to),
@@ -1701,7 +1674,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.unwrap();
+            let value = value.expect("set_data_check:value");
             Command::SetDataCheck(SetDataCheck {
                 from,
                 to,
@@ -1754,14 +1727,11 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_disable_timing");
-    let from = env
-        .symbol("-from")
+    let command = symbol("set_disable_timing");
+    let from = symbol("-from")
         .with(parser(object))
         .map(|x| CommandArg::From(x));
-    let to = env
-        .symbol("-to")
+    let to = symbol("-to")
         .with(parser(object))
         .map(|x| CommandArg::To(x));
     let cell_pin_list = parser(object).map(|x| CommandArg::Object(x));
@@ -1780,7 +1750,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let cell_pin_list = cell_pin_list.unwrap();
+            let cell_pin_list = cell_pin_list.expect("set_disable_timing:cell_pin_list");
             Command::SetDisableTiming(SetDisableTiming {
                 from,
                 to,
@@ -1830,51 +1800,40 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_false_path");
-    let setup = env.symbol("-setup").map(|_| CommandArg::Setup);
-    let hold = env.symbol("-hold").map(|_| CommandArg::Hold);
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let from = env
-        .symbol("-from")
+    let command = symbol("set_false_path");
+    let setup = symbol("-setup").map(|_| CommandArg::Setup);
+    let hold = symbol("-hold").map(|_| CommandArg::Hold);
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let from = symbol("-from")
         .with(parser(object))
         .map(|x| CommandArg::From(x));
-    let to = env
-        .symbol("-to")
+    let to = symbol("-to")
         .with(parser(object))
         .map(|x| CommandArg::To(x));
-    let through = env
-        .symbol("-through")
+    let through = symbol("-through")
         .with(parser(object))
         .map(|x| CommandArg::Through(x));
-    let rise_from = env
-        .symbol("-rise_from")
+    let rise_from = symbol("-rise_from")
         .with(parser(object))
         .map(|x| CommandArg::RiseFrom(x));
-    let rise_to = env
-        .symbol("-rise_to")
+    let rise_to = symbol("-rise_to")
         .with(parser(object))
         .map(|x| CommandArg::RiseTo(x));
-    let rise_through = env
-        .symbol("-rise_through")
+    let rise_through = symbol("-rise_through")
         .with(parser(object))
         .map(|x| CommandArg::RiseThrough(x));
-    let fall_from = env
-        .symbol("-fall_from")
+    let fall_from = symbol("-fall_from")
         .with(parser(object))
         .map(|x| CommandArg::FallFrom(x));
-    let fall_to = env
-        .symbol("-fall_to")
+    let fall_to = symbol("-fall_to")
         .with(parser(object))
         .map(|x| CommandArg::FallTo(x));
-    let fall_through = env
-        .symbol("-fall_through")
+    let fall_through = symbol("-fall_through")
         .with(parser(object))
         .map(|x| CommandArg::FallThrough(x));
-    let comment = env
-        .symbol("-comment")
-        .with(env.string_literal())
+    let comment = symbol("-comment")
+        .with(item())
         .map(|x| CommandArg::Comment(x));
     let args = (
         attempt(setup),
@@ -1991,13 +1950,12 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_ideal_latency");
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let delay = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_ideal_latency");
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let delay = float().map(|x| CommandArg::Value(x));
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(rise),
@@ -2027,8 +1985,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay = delay.unwrap();
-            let object_list = object_list.unwrap();
+            let delay = delay.expect("set_ideal_latency:delay");
+            let object_list = object_list.expect("set_ideal_latency:object_list");
             Command::SetIdealLatency(SetIdealLatency {
                 rise,
                 fall,
@@ -2072,9 +2030,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_ideal_network");
-    let no_propagate = env.symbol("-no_propagate").map(|_| CommandArg::NoPropagate);
+    let command = symbol("set_ideal_network");
+    let no_propagate = symbol("-no_propagate").map(|_| CommandArg::NoPropagate);
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(no_propagate), attempt(object_list));
     command
@@ -2089,7 +2046,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let object_list = object_list.unwrap();
+            let object_list = object_list.expect("set_ideal_network:object_list");
             Command::SetIdealNetwork(SetIdealNetwork {
                 no_propagate,
                 object_list,
@@ -2129,13 +2086,12 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_ideal_transition");
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let transition_time = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_ideal_transition");
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let transition_time = float().map(|x| CommandArg::Value(x));
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(rise),
@@ -2165,8 +2121,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let transition_time = transition_time.unwrap();
-            let object_list = object_list.unwrap();
+            let transition_time = transition_time.expect("set_ideal_transition:transition_time");
+            let object_list = object_list.expect("set_ideal_transition:object_list");
             Command::SetIdealTransition(SetIdealTransition {
                 rise,
                 fall,
@@ -2221,32 +2177,25 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_input_delay");
-    let clock = env
-        .symbol("-clock")
+    let command = symbol("set_input_delay");
+    let clock = symbol("-clock")
         .with(parser(object))
         .map(|x| CommandArg::ClockObj(x));
-    let reference_pin = env
-        .symbol("-reference_pin")
+    let reference_pin = symbol("-reference_pin")
         .with(parser(object))
         .map(|x| CommandArg::ReferencePin(x));
-    let clock_fall = env.symbol("-clock_fall").map(|_| CommandArg::ClockFall);
-    let level_sensitive = env
-        .symbol("-level_sensitive")
-        .map(|_| CommandArg::LevelSensitive);
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let add_delay = env.symbol("-add_delay").map(|_| CommandArg::AddDelay);
-    let network_latency_included = env
-        .symbol("-network_latency_included")
-        .map(|_| CommandArg::NetworkLatencyIncluded);
-    let source_latency_included = env
-        .symbol("-source_latency_included")
-        .map(|_| CommandArg::SourceLatencyIncluded);
-    let delay_value = env.float().map(|x| CommandArg::Value(x));
+    let clock_fall = symbol("-clock_fall").map(|_| CommandArg::ClockFall);
+    let level_sensitive = symbol("-level_sensitive").map(|_| CommandArg::LevelSensitive);
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let add_delay = symbol("-add_delay").map(|_| CommandArg::AddDelay);
+    let network_latency_included =
+        symbol("-network_latency_included").map(|_| CommandArg::NetworkLatencyIncluded);
+    let source_latency_included =
+        symbol("-source_latency_included").map(|_| CommandArg::SourceLatencyIncluded);
+    let delay_value = float().map(|x| CommandArg::Value(x));
     let port_pin_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(clock),
@@ -2297,8 +2246,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.unwrap();
-            let port_pin_list = port_pin_list.unwrap();
+            let delay_value = delay_value.expect("set_input_delay:delay_value");
+            let port_pin_list = port_pin_list.expect("set_input_delay:port_pin_list");
             Command::SetInputDelay(SetInputDelay {
                 clock,
                 reference_pin,
@@ -2368,54 +2317,42 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_max_delay");
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let from = env
-        .symbol("-from")
+    let command = symbol("set_max_delay");
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let from = symbol("-from")
         .with(parser(object))
         .map(|x| CommandArg::From(x));
-    let to = env
-        .symbol("-to")
+    let to = symbol("-to")
         .with(parser(object))
         .map(|x| CommandArg::To(x));
-    let through = env
-        .symbol("-through")
+    let through = symbol("-through")
         .with(parser(object))
         .map(|x| CommandArg::Through(x));
-    let rise_from = env
-        .symbol("-rise_from")
+    let rise_from = symbol("-rise_from")
         .with(parser(object))
         .map(|x| CommandArg::RiseFrom(x));
-    let rise_to = env
-        .symbol("-rise_to")
+    let rise_to = symbol("-rise_to")
         .with(parser(object))
         .map(|x| CommandArg::RiseTo(x));
-    let rise_through = env
-        .symbol("-rise_through")
+    let rise_through = symbol("-rise_through")
         .with(parser(object))
         .map(|x| CommandArg::RiseThrough(x));
-    let fall_from = env
-        .symbol("-fall_from")
+    let fall_from = symbol("-fall_from")
         .with(parser(object))
         .map(|x| CommandArg::FallFrom(x));
-    let fall_to = env
-        .symbol("-fall_to")
+    let fall_to = symbol("-fall_to")
         .with(parser(object))
         .map(|x| CommandArg::FallTo(x));
-    let fall_through = env
-        .symbol("-fall_through")
+    let fall_through = symbol("-fall_through")
         .with(parser(object))
         .map(|x| CommandArg::FallThrough(x));
-    let ignore_clock_latency = env
-        .symbol("-ignore_clock_latency")
-        .map(|_| CommandArg::IgnoreClockLatency);
-    let comment = env
-        .symbol("-comment")
-        .with(env.string_literal())
+    let ignore_clock_latency =
+        symbol("-ignore_clock_latency").map(|_| CommandArg::IgnoreClockLatency);
+    let comment = symbol("-comment")
+        .with(item())
         .map(|x| CommandArg::Comment(x));
-    let delay_value = env.float().map(|x| CommandArg::Value(x));
+    let delay_value = float().map(|x| CommandArg::Value(x));
     let args = (
         attempt(from),
         attempt(to),
@@ -2468,7 +2405,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.unwrap();
+            let delay_value = delay_value.expect("set_max_delay:delay_value");
             Command::SetMaxDelay(SetMaxDelay {
                 rise,
                 fall,
@@ -2528,9 +2465,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_max_time_borrow");
-    let delay_value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_max_time_borrow");
+    let delay_value = float().map(|x| CommandArg::Value(x));
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(delay_value), attempt(object_list));
     command
@@ -2545,8 +2481,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.unwrap();
-            let object_list = object_list.unwrap();
+            let delay_value = delay_value.expect("set_max_time_borrow:delay_value");
+            let object_list = object_list.expect("set_max_time_borrow:object_list");
             Command::SetMaxTimeBorrow(SetMaxTimeBorrow {
                 delay_value,
                 object_list,
@@ -2594,54 +2530,42 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_min_delay");
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let from = env
-        .symbol("-from")
+    let command = symbol("set_min_delay");
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let from = symbol("-from")
         .with(parser(object))
         .map(|x| CommandArg::From(x));
-    let to = env
-        .symbol("-to")
+    let to = symbol("-to")
         .with(parser(object))
         .map(|x| CommandArg::To(x));
-    let through = env
-        .symbol("-through")
+    let through = symbol("-through")
         .with(parser(object))
         .map(|x| CommandArg::Through(x));
-    let rise_from = env
-        .symbol("-rise_from")
+    let rise_from = symbol("-rise_from")
         .with(parser(object))
         .map(|x| CommandArg::RiseFrom(x));
-    let rise_to = env
-        .symbol("-rise_to")
+    let rise_to = symbol("-rise_to")
         .with(parser(object))
         .map(|x| CommandArg::RiseTo(x));
-    let rise_through = env
-        .symbol("-rise_through")
+    let rise_through = symbol("-rise_through")
         .with(parser(object))
         .map(|x| CommandArg::RiseThrough(x));
-    let fall_from = env
-        .symbol("-fall_from")
+    let fall_from = symbol("-fall_from")
         .with(parser(object))
         .map(|x| CommandArg::FallFrom(x));
-    let fall_to = env
-        .symbol("-fall_to")
+    let fall_to = symbol("-fall_to")
         .with(parser(object))
         .map(|x| CommandArg::FallTo(x));
-    let fall_through = env
-        .symbol("-fall_through")
+    let fall_through = symbol("-fall_through")
         .with(parser(object))
         .map(|x| CommandArg::FallThrough(x));
-    let ignore_clock_latency = env
-        .symbol("-ignore_clock_latency")
-        .map(|_| CommandArg::IgnoreClockLatency);
-    let comment = env
-        .symbol("-comment")
-        .with(env.string_literal())
+    let ignore_clock_latency =
+        symbol("-ignore_clock_latency").map(|_| CommandArg::IgnoreClockLatency);
+    let comment = symbol("-comment")
+        .with(item())
         .map(|x| CommandArg::Comment(x));
-    let delay_value = env.float().map(|x| CommandArg::Value(x));
+    let delay_value = float().map(|x| CommandArg::Value(x));
     let args = (
         attempt(from),
         attempt(to),
@@ -2694,7 +2618,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.unwrap();
+            let delay_value = delay_value.expect("set_min_delay:delay_value");
             Command::SetMinDelay(SetMinDelay {
                 rise,
                 fall,
@@ -2756,11 +2680,10 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_min_pulse_width");
-    let low = env.symbol("-low").map(|_| CommandArg::Low);
-    let high = env.symbol("-high").map(|_| CommandArg::High);
-    let value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_min_pulse_width");
+    let low = symbol("-low").map(|_| CommandArg::Low);
+    let high = symbol("-high").map(|_| CommandArg::High);
+    let value = float().map(|x| CommandArg::Value(x));
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(low),
@@ -2784,7 +2707,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.unwrap();
+            let value = value.expect("set_min_pulse_width:value");
             Command::SetMinPulseWidth(SetMinPulseWidth {
                 low,
                 high,
@@ -2839,55 +2762,44 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_multicycle_path");
-    let setup = env.symbol("-setup").map(|_| CommandArg::Setup);
-    let hold = env.symbol("-hold").map(|_| CommandArg::Hold);
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let start = env.symbol("-start").map(|_| CommandArg::Start);
-    let end = env.symbol("-end").map(|_| CommandArg::End);
-    let from = env
-        .symbol("-from")
+    let command = symbol("set_multicycle_path");
+    let setup = symbol("-setup").map(|_| CommandArg::Setup);
+    let hold = symbol("-hold").map(|_| CommandArg::Hold);
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let start = symbol("-start").map(|_| CommandArg::Start);
+    let end = symbol("-end").map(|_| CommandArg::End);
+    let from = symbol("-from")
         .with(parser(object))
         .map(|x| CommandArg::From(x));
-    let to = env
-        .symbol("-to")
+    let to = symbol("-to")
         .with(parser(object))
         .map(|x| CommandArg::To(x));
-    let through = env
-        .symbol("-through")
+    let through = symbol("-through")
         .with(parser(object))
         .map(|x| CommandArg::Through(x));
-    let rise_from = env
-        .symbol("-rise_from")
+    let rise_from = symbol("-rise_from")
         .with(parser(object))
         .map(|x| CommandArg::RiseFrom(x));
-    let rise_to = env
-        .symbol("-rise_to")
+    let rise_to = symbol("-rise_to")
         .with(parser(object))
         .map(|x| CommandArg::RiseTo(x));
-    let rise_through = env
-        .symbol("-rise_through")
+    let rise_through = symbol("-rise_through")
         .with(parser(object))
         .map(|x| CommandArg::RiseThrough(x));
-    let fall_from = env
-        .symbol("-fall_from")
+    let fall_from = symbol("-fall_from")
         .with(parser(object))
         .map(|x| CommandArg::FallFrom(x));
-    let fall_to = env
-        .symbol("-fall_to")
+    let fall_to = symbol("-fall_to")
         .with(parser(object))
         .map(|x| CommandArg::FallTo(x));
-    let fall_through = env
-        .symbol("-fall_through")
+    let fall_through = symbol("-fall_through")
         .with(parser(object))
         .map(|x| CommandArg::FallThrough(x));
-    let comment = env
-        .symbol("-comment")
-        .with(env.string_literal())
+    let comment = symbol("-comment")
+        .with(item())
         .map(|x| CommandArg::Comment(x));
-    let path_multiplier = env.float().map(|x| CommandArg::Value(x));
+    let path_multiplier = float().map(|x| CommandArg::Value(x));
     let args = (
         attempt(setup),
         attempt(hold),
@@ -2949,7 +2861,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let path_multiplier = path_multiplier.unwrap();
+            let path_multiplier = path_multiplier.expect("set_multicycle_path:path_multiplier");
             Command::SetMulticyclePath(SetMulticyclePath {
                 setup,
                 hold,
@@ -3026,32 +2938,25 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_output_delay");
-    let clock = env
-        .symbol("-clock")
+    let command = symbol("set_output_delay");
+    let clock = symbol("-clock")
         .with(parser(object))
         .map(|x| CommandArg::ClockObj(x));
-    let reference_pin = env
-        .symbol("-reference_pin")
+    let reference_pin = symbol("-reference_pin")
         .with(parser(object))
         .map(|x| CommandArg::ReferencePin(x));
-    let clock_fall = env.symbol("-clock_fall").map(|_| CommandArg::ClockFall);
-    let level_sensitive = env
-        .symbol("-level_sensitive")
-        .map(|_| CommandArg::LevelSensitive);
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let add_delay = env.symbol("-add_delay").map(|_| CommandArg::AddDelay);
-    let network_latency_included = env
-        .symbol("-network_latency_included")
-        .map(|_| CommandArg::NetworkLatencyIncluded);
-    let source_latency_included = env
-        .symbol("-source_latency_included")
-        .map(|_| CommandArg::SourceLatencyIncluded);
-    let delay_value = env.float().map(|x| CommandArg::Value(x));
+    let clock_fall = symbol("-clock_fall").map(|_| CommandArg::ClockFall);
+    let level_sensitive = symbol("-level_sensitive").map(|_| CommandArg::LevelSensitive);
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let add_delay = symbol("-add_delay").map(|_| CommandArg::AddDelay);
+    let network_latency_included =
+        symbol("-network_latency_included").map(|_| CommandArg::NetworkLatencyIncluded);
+    let source_latency_included =
+        symbol("-source_latency_included").map(|_| CommandArg::SourceLatencyIncluded);
+    let delay_value = float().map(|x| CommandArg::Value(x));
     let port_pin_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(clock),
@@ -3102,8 +3007,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.unwrap();
-            let port_pin_list = port_pin_list.unwrap();
+            let delay_value = delay_value.expect("set_output_delay:delay_value");
+            let port_pin_list = port_pin_list.expect("set_output_delay:port_pin_list");
             Command::SetOutputDelay(SetOutputDelay {
                 clock,
                 reference_pin,
@@ -3160,8 +3065,7 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_propagated_clock");
+    let command = symbol("set_propagated_clock");
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(object_list),);
     command
@@ -3174,7 +3078,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let object_list = object_list.unwrap();
+            let object_list = object_list.expect("set_propagated_clock:object_list");
             Command::SetPropagatedClock(SetPropagatedClock { object_list })
         })
         .parse_stream(input)
@@ -3220,13 +3124,12 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_case_analysis");
+    let command = symbol("set_case_analysis");
     let value = choice((
-        env.symbol("0"),
-        env.symbol("1"),
-        env.symbol("rising"),
-        env.symbol("falling"),
+        symbol("0"),
+        symbol("1"),
+        symbol("rising"),
+        symbol("falling"),
     ))
     .map(|x| match x {
         "0" => CommandArg::CaseValue(CaseValue::Zero),
@@ -3249,8 +3152,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.unwrap();
-            let port_or_pin_list = port_or_pin_list.unwrap();
+            let value = value.expect("set_case_analysis:value");
+            let port_or_pin_list = port_or_pin_list.expect("set_case_analysis:port_or_pin_list");
             Command::SetCaseAnalysis(SetCaseAnalysis {
                 value,
                 port_or_pin_list,
@@ -3314,13 +3217,12 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_drive");
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let resistance = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_drive");
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let resistance = float().map(|x| CommandArg::Value(x));
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(rise),
@@ -3350,8 +3252,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let resistance = resistance.unwrap();
-            let port_list = port_list.unwrap();
+            let resistance = resistance.expect("set_drive:resistance");
+            let port_list = port_list.expect("set_drive:port_list");
             Command::SetDrive(SetDrive {
                 rise,
                 fall,
@@ -3400,6 +3302,7 @@ pub struct SetDrivingCell {
     pub clock_fall: bool,
     pub input_transition_rise: Option<f64>,
     pub input_transition_fall: Option<f64>,
+    pub multiply_by: Option<f64>,
     pub port_list: Object,
 }
 
@@ -3408,45 +3311,38 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_driving_cell");
-    let lib_cell = env
-        .symbol("-lib_cell")
+    let command = symbol("set_driving_cell");
+    let lib_cell = symbol("-lib_cell")
         .with(parser(object))
         .map(|x| CommandArg::LibCell(x));
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let library = env
-        .symbol("-library")
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let library = symbol("-library")
         .with(parser(object))
         .map(|x| CommandArg::Library(x));
-    let pin = env
-        .symbol("-pin")
+    let pin = symbol("-pin")
         .with(parser(object))
         .map(|x| CommandArg::Pin(x));
-    let from_pin = env
-        .symbol("-from_pin")
+    let from_pin = symbol("-from_pin")
         .with(parser(object))
         .map(|x| CommandArg::FromPin(x));
-    let dont_scale = env.symbol("-dont_scale").map(|_| CommandArg::DontScale);
-    let no_design_rule = env
-        .symbol("-no_design_rule")
-        .map(|_| CommandArg::NoDesignRule);
-    let clock = env
-        .symbol("-clock")
+    let dont_scale = symbol("-dont_scale").map(|_| CommandArg::DontScale);
+    let no_design_rule = symbol("-no_design_rule").map(|_| CommandArg::NoDesignRule);
+    let clock = symbol("-clock")
         .with(parser(object))
         .map(|x| CommandArg::ClockObj(x));
-    let clock_fall = env.symbol("-clock_fall").map(|_| CommandArg::ClockFall);
-    let input_transition_rise = env
-        .symbol("-input_transition_rise")
-        .with(env.float())
+    let clock_fall = symbol("-clock_fall").map(|_| CommandArg::ClockFall);
+    let input_transition_rise = symbol("-input_transition_rise")
+        .with(float())
         .map(|x| CommandArg::InputTransitionRise(x));
-    let input_transition_fall = env
-        .symbol("-input_transition_fall")
-        .with(env.float())
+    let input_transition_fall = symbol("-input_transition_fall")
+        .with(float())
         .map(|x| CommandArg::InputTransitionFall(x));
+    let multiply_by = symbol("-multiply_by")
+        .with(float())
+        .map(|x| CommandArg::MultiplyBy(x));
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(lib_cell),
@@ -3463,6 +3359,7 @@ where
         attempt(clock_fall),
         attempt(input_transition_rise),
         attempt(input_transition_fall),
+        attempt(multiply_by),
         attempt(port_list),
     );
     command
@@ -3482,6 +3379,7 @@ where
             let mut clock_fall = false;
             let mut input_transition_rise = None;
             let mut input_transition_fall = None;
+            let mut multiply_by = None;
             let mut port_list = None;
             for x in xs {
                 match x {
@@ -3499,11 +3397,12 @@ where
                     CommandArg::ClockFall => clock_fall = true,
                     CommandArg::InputTransitionRise(x) => input_transition_rise = Some(x),
                     CommandArg::InputTransitionFall(x) => input_transition_fall = Some(x),
+                    CommandArg::MultiplyBy(x) => multiply_by = Some(x),
                     CommandArg::Object(x) => port_list = Some(x),
                     _ => unreachable!(),
                 }
             }
-            let port_list = port_list.unwrap();
+            let port_list = port_list.expect("set_driving_cell:port_list");
             Command::SetDrivingCell(SetDrivingCell {
                 lib_cell,
                 rise,
@@ -3519,6 +3418,7 @@ where
                 clock_fall,
                 input_transition_rise,
                 input_transition_fall,
+                multiply_by,
                 port_list,
             })
         })
@@ -3528,7 +3428,7 @@ where
 #[test]
 fn test_set_driving_cell() {
     let mut parser = parser(command);
-    let tgt = "set_driving_cell -lib_cell a -rise -fall -min -max -library a -pin a -from_pin a -dont_scale -no_design_rule -clock a -clock_fall -input_transition_rise 0.1 -input_transition_fall 0.1 a";
+    let tgt = "set_driving_cell -lib_cell a -rise -fall -min -max -library a -pin a -from_pin a -dont_scale -no_design_rule -clock a -clock_fall -input_transition_rise 0.1 -input_transition_fall 0.1 -multiply_by 0.1 a";
     assert_eq!(
         Command::SetDrivingCell(SetDrivingCell {
             lib_cell: Some(Object::String(vec![String::from("a")])),
@@ -3545,6 +3445,7 @@ fn test_set_driving_cell() {
             clock_fall: true,
             input_transition_rise: Some(0.1),
             input_transition_fall: Some(0.1),
+            multiply_by: Some(0.1),
             port_list: Object::String(vec![String::from("a")]),
         }),
         parser.parse(tgt).unwrap().0
@@ -3565,9 +3466,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_fanout_load");
-    let value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_fanout_load");
+    let value = float().map(|x| CommandArg::Value(x));
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(value), attempt(port_list));
     command
@@ -3582,8 +3482,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.unwrap();
-            let port_list = port_list.unwrap();
+            let value = value.expect("set_fanout_load:value");
+            let port_list = port_list.expect("set_fanout_load:port_list");
             Command::SetFanoutLoad(SetFanoutLoad { value, port_list })
         })
         .parse_stream(input)
@@ -3622,18 +3522,16 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_input_transition");
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let clock = env
-        .symbol("-clock")
+    let command = symbol("set_input_transition");
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let clock = symbol("-clock")
         .with(parser(object))
         .map(|x| CommandArg::ClockObj(x));
-    let clock_fall = env.symbol("-clock_fall").map(|_| CommandArg::ClockFall);
-    let transition = env.float().map(|x| CommandArg::Value(x));
+    let clock_fall = symbol("-clock_fall").map(|_| CommandArg::ClockFall);
+    let transition = float().map(|x| CommandArg::Value(x));
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(rise),
@@ -3669,8 +3567,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let transition = transition.unwrap();
-            let port_list = port_list.unwrap();
+            let transition = transition.expect("set_input_transition:transition");
+            let port_list = port_list.expect("set_input_transition:port_list");
             Command::SetInputTransition(SetInputTransition {
                 rise,
                 fall,
@@ -3723,16 +3621,13 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_load");
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let subtract_pin_load = env
-        .symbol("-subtract_pin_load")
-        .map(|_| CommandArg::SubtractPinLoad);
-    let pin_load = env.symbol("-pin_load").map(|_| CommandArg::PinLoad);
-    let wire_load = env.symbol("-wire_load").map(|_| CommandArg::WireLoad);
-    let value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_load");
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let subtract_pin_load = symbol("-subtract_pin_load").map(|_| CommandArg::SubtractPinLoad);
+    let pin_load = symbol("-pin_load").map(|_| CommandArg::PinLoad);
+    let wire_load = symbol("-wire_load").map(|_| CommandArg::WireLoad);
+    let value = float().map(|x| CommandArg::Value(x));
     let objects = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(min),
@@ -3765,8 +3660,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.unwrap();
-            let objects = objects.unwrap();
+            let value = value.expect("set_load:value");
+            let objects = objects.expect("set_load:objects");
             Command::SetLoad(SetLoad {
                 min,
                 max,
@@ -3811,8 +3706,7 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_logic_dc");
+    let command = symbol("set_logic_dc");
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(port_list),);
     command
@@ -3825,7 +3719,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let port_list = port_list.unwrap();
+            let port_list = port_list.expect("set_logic_dc:port_list");
             Command::SetLogicDc(SetLogicDc { port_list })
         })
         .parse_stream(input)
@@ -3856,8 +3750,7 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_logic_one");
+    let command = symbol("set_logic_one");
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(port_list),);
     command
@@ -3870,7 +3763,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let port_list = port_list.unwrap();
+            let port_list = port_list.expect("set_logic_one:port_list");
             Command::SetLogicOne(SetLogicOne { port_list })
         })
         .parse_stream(input)
@@ -3901,8 +3794,7 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_logic_zero");
+    let command = symbol("set_logic_zero");
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(port_list),);
     command
@@ -3915,7 +3807,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let port_list = port_list.unwrap();
+            let port_list = port_list.expect("set_logic_zero:port_list");
             Command::SetLogicZero(SetLogicZero { port_list })
         })
         .parse_stream(input)
@@ -3946,9 +3838,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_max_area");
-    let area_value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_max_area");
+    let area_value = float().map(|x| CommandArg::Value(x));
     let args = (attempt(area_value),);
     command
         .with(many(choice(args)))
@@ -3960,7 +3851,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let area_value = area_value.unwrap();
+            let area_value = area_value.expect("set_max_area:area_value");
             Command::SetMaxArea(SetMaxArea { area_value })
         })
         .parse_stream(input)
@@ -3990,9 +3881,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_max_capacitance");
-    let value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_max_capacitance");
+    let value = float().map(|x| CommandArg::Value(x));
     let objects = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(value), attempt(objects));
     command
@@ -4007,8 +3897,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.unwrap();
-            let objects = objects.unwrap();
+            let value = value.expect("set_max_capacitance:value");
+            let objects = objects.expect("set_max_capacitance:objects");
             Command::SetMaxCapacitance(SetMaxCapacitance { value, objects })
         })
         .parse_stream(input)
@@ -4041,9 +3931,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_max_fanout");
-    let value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_max_fanout");
+    let value = float().map(|x| CommandArg::Value(x));
     let objects = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(value), attempt(objects));
     command
@@ -4058,8 +3947,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.unwrap();
-            let objects = objects.unwrap();
+            let value = value.expect("set_max_fanout:value");
+            let objects = objects.expect("set_max_fanout:objects");
             Command::SetMaxFanout(SetMaxFanout { value, objects })
         })
         .parse_stream(input)
@@ -4096,13 +3985,12 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_max_transition");
-    let clock_path = env.symbol("-clock_path").map(|_| CommandArg::ClockPath);
-    let data_path = env.symbol("-data_path").map(|_| CommandArg::DataPath);
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_max_transition");
+    let clock_path = symbol("-clock_path").map(|_| CommandArg::ClockPath);
+    let data_path = symbol("-data_path").map(|_| CommandArg::DataPath);
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let value = float().map(|x| CommandArg::Value(x));
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(clock_path),
@@ -4132,8 +4020,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.unwrap();
-            let object_list = object_list.unwrap();
+            let value = value.expect("set_max_transition:value");
+            let object_list = object_list.expect("set_max_transition:object_list");
             Command::SetMaxTransition(SetMaxTransition {
                 clock_path,
                 data_path,
@@ -4177,9 +4065,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_min_capacitance");
-    let value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_min_capacitance");
+    let value = float().map(|x| CommandArg::Value(x));
     let objects = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(value), attempt(objects));
     command
@@ -4194,8 +4081,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.unwrap();
-            let objects = objects.unwrap();
+            let value = value.expect("set_min_capacitance:value");
+            let objects = objects.expect("set_min_capacitance:objects");
             Command::SetMinCapacitance(SetMinCapacitance { value, objects })
         })
         .parse_stream(input)
@@ -4209,6 +4096,59 @@ fn test_set_min_capacitance() {
         Command::SetMinCapacitance(SetMinCapacitance {
             value: 0.1,
             objects: Object::String(vec![String::from("a")]),
+        }),
+        parser.parse(tgt).unwrap().0
+    );
+}
+
+// -----------------------------------------------------------------------------
+
+/// A type containing information of `set_min_porosity`
+#[derive(Debug, Default, PartialEq)]
+pub struct SetMinPorosity {
+    pub porosity_value: f64,
+    pub object_list: Object,
+}
+
+fn set_min_porosity<I>(input: &mut I) -> ParseResult<Command, I>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    let command = symbol("set_min_porosity");
+    let porosity_value = float().map(|x| CommandArg::Value(x));
+    let object_list = parser(object).map(|x| CommandArg::Object(x));
+    let args = (attempt(porosity_value), attempt(object_list));
+    command
+        .with(many(choice(args)))
+        .map(|xs: Vec<_>| {
+            let mut value = None;
+            let mut objects = None;
+            for x in xs {
+                match x {
+                    CommandArg::Value(x) => value = Some(x),
+                    CommandArg::Object(x) => objects = Some(x),
+                    _ => unreachable!(),
+                }
+            }
+            let porosity_value = value.expect("set_min_porosity:value");
+            let object_list = objects.expect("set_min_porosity:objects");
+            Command::SetMinPorosity(SetMinPorosity {
+                porosity_value,
+                object_list,
+            })
+        })
+        .parse_stream(input)
+}
+
+#[test]
+fn test_set_min_porosity() {
+    let mut parser = parser(command);
+    let tgt = "set_min_porosity 0.1 a";
+    assert_eq!(
+        Command::SetMinPorosity(SetMinPorosity {
+            porosity_value: 0.1,
+            object_list: Object::String(vec![String::from("a")]),
         }),
         parser.parse(tgt).unwrap().0
     );
@@ -4234,37 +4174,25 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_operating_conditions");
-    let library = env
-        .symbol("-library")
+    let command = symbol("set_operating_conditions");
+    let library = symbol("-library")
         .with(parser(object))
         .map(|x| CommandArg::Library(x));
-    let analysis_type = env
-        .symbol("-analysis_type")
-        .with(env.identifier())
+    let analysis_type = symbol("-analysis_type")
+        .with(item())
         .map(|x| CommandArg::AnalysisType(x));
-    let max = env
-        .symbol("-max")
-        .with(env.identifier())
-        .map(|x| CommandArg::MaxStr(x));
-    let min = env
-        .symbol("-min")
-        .with(env.identifier())
-        .map(|x| CommandArg::MinStr(x));
-    let max_library = env
-        .symbol("-max_library")
+    let max = symbol("-max").with(item()).map(|x| CommandArg::MaxStr(x));
+    let min = symbol("-min").with(item()).map(|x| CommandArg::MinStr(x));
+    let max_library = symbol("-max_library")
         .with(parser(object))
         .map(|x| CommandArg::MaxLibrary(x));
-    let min_library = env
-        .symbol("-min_library")
+    let min_library = symbol("-min_library")
         .with(parser(object))
         .map(|x| CommandArg::MinLibrary(x));
-    let object_list = env
-        .symbol("-object_list")
+    let object_list = symbol("-object_list")
         .with(parser(object))
         .map(|x| CommandArg::ObjectList(x));
-    let condition = env.identifier().map(|x| CommandArg::String(x));
+    let condition = item().map(|x| CommandArg::String(x));
     let args = (
         attempt(library),
         attempt(analysis_type),
@@ -4347,9 +4275,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_port_fanout_number");
-    let value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_port_fanout_number");
+    let value = float().map(|x| CommandArg::Value(x));
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(value), attempt(port_list));
     command
@@ -4364,8 +4291,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.unwrap();
-            let port_list = port_list.unwrap();
+            let value = value.expect("set_port_fanout_number:value");
+            let port_list = port_list.expect("set_port_fanout_number:port_list");
             Command::SetPortFanoutNumber(SetPortFanoutNumber { value, port_list })
         })
         .parse_stream(input)
@@ -4400,11 +4327,10 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_resistance");
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_resistance");
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let value = float().map(|x| CommandArg::Value(x));
     let net_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(min),
@@ -4428,8 +4354,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.unwrap();
-            let net_list = net_list.unwrap();
+            let value = value.expect("set_resistance:value");
+            let net_list = net_list.expect("set_resistance:net_list");
             Command::SetResistance(SetResistance {
                 min,
                 max,
@@ -4481,21 +4407,20 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_timing_derate");
-    let cell_delay = env.symbol("-cell_delay").map(|_| CommandArg::CellDelay);
-    let cell_check = env.symbol("-cell_check").map(|_| CommandArg::CellCheck);
-    let net_delay = env.symbol("-net_delay").map(|_| CommandArg::NetDelay);
-    let data = env.symbol("-data").map(|_| CommandArg::Data);
-    let clock = env.symbol("-clock").map(|_| CommandArg::Clock);
-    let early = env.symbol("-early").map(|_| CommandArg::Early);
-    let late = env.symbol("-late").map(|_| CommandArg::Late);
-    let rise = env.symbol("-rise").map(|_| CommandArg::Rise);
-    let fall = env.symbol("-fall").map(|_| CommandArg::Fall);
-    let r#static = env.symbol("-static").map(|_| CommandArg::Static);
-    let dynamic = env.symbol("-dynamic").map(|_| CommandArg::Dynamic);
-    let increment = env.symbol("-increment").map(|_| CommandArg::Increment);
-    let derate_value = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_timing_derate");
+    let cell_delay = symbol("-cell_delay").map(|_| CommandArg::CellDelay);
+    let cell_check = symbol("-cell_check").map(|_| CommandArg::CellCheck);
+    let net_delay = symbol("-net_delay").map(|_| CommandArg::NetDelay);
+    let data = symbol("-data").map(|_| CommandArg::Data);
+    let clock = symbol("-clock").map(|_| CommandArg::Clock);
+    let early = symbol("-early").map(|_| CommandArg::Early);
+    let late = symbol("-late").map(|_| CommandArg::Late);
+    let rise = symbol("-rise").map(|_| CommandArg::Rise);
+    let fall = symbol("-fall").map(|_| CommandArg::Fall);
+    let r#static = symbol("-static").map(|_| CommandArg::Static);
+    let dynamic = symbol("-dynamic").map(|_| CommandArg::Dynamic);
+    let increment = symbol("-increment").map(|_| CommandArg::Increment);
+    let derate_value = float().map(|x| CommandArg::Value(x));
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(cell_delay),
@@ -4549,7 +4474,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let derate_value = derate_value.unwrap();
+            let derate_value = derate_value.expect("set_timing_derate:derate_value");
             Command::SetTimingDerate(SetTimingDerate {
                 cell_delay,
                 cell_check,
@@ -4610,17 +4535,12 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_voltage");
-    let min = env
-        .symbol("-min")
-        .with(env.float())
-        .map(|x| CommandArg::MinVal(x));
-    let object_list = env
-        .symbol("-object_list")
+    let command = symbol("set_voltage");
+    let min = symbol("-min").with(float()).map(|x| CommandArg::MinVal(x));
+    let object_list = symbol("-object_list")
         .with(parser(object))
         .map(|x| CommandArg::ObjectList(x));
-    let max_case_voltage = env.float().map(|x| CommandArg::Value(x));
+    let max_case_voltage = float().map(|x| CommandArg::Value(x));
     let args = (
         attempt(min),
         attempt(object_list),
@@ -4640,7 +4560,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let max_case_voltage = max_case_voltage.unwrap();
+            let max_case_voltage = max_case_voltage.expect("set_voltage:max_case_voltage");
             Command::SetVoltage(SetVoltage {
                 min,
                 object_list,
@@ -4677,9 +4597,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_wire_load_min_block_size");
-    let size = env.float().map(|x| CommandArg::Value(x));
+    let command = symbol("set_wire_load_min_block_size");
+    let size = float().map(|x| CommandArg::Value(x));
     let args = (attempt(size),);
     command
         .with(many(choice(args)))
@@ -4691,7 +4610,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let size = size.unwrap();
+            let size = size.expect("set_wire_load_min_block_size:size");
             Command::SetWireLoadMinBlockSize(SetWireLoadMinBlockSize { size })
         })
         .parse_stream(input)
@@ -4720,9 +4639,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_wire_load_mode");
-    let mode_name = env.identifier().map(|x| CommandArg::String(x));
+    let command = symbol("set_wire_load_mode");
+    let mode_name = item().map(|x| CommandArg::String(x));
     let args = (attempt(mode_name),);
     command
         .with(many(choice(args)))
@@ -4734,7 +4652,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let mode_name = mode_name.unwrap();
+            let mode_name = mode_name.expect("set_wire_load_mode:mode_name");
             Command::SetWireLoadMode(SetWireLoadMode { mode_name })
         })
         .parse_stream(input)
@@ -4769,18 +4687,13 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_wire_load_model");
-    let name = env
-        .symbol("-name")
-        .with(env.identifier())
-        .map(|x| CommandArg::Name(x));
-    let library = env
-        .symbol("-library")
+    let command = symbol("set_wire_load_model");
+    let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
+    let library = symbol("-library")
         .with(parser(object))
         .map(|x| CommandArg::Library(x));
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let max = symbol("-max").map(|_| CommandArg::Max);
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(name),
@@ -4807,7 +4720,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let name = name.unwrap();
+            let name = name.expect("set_wire_load_model:name");
             Command::SetWireLoadModel(SetWireLoadModel {
                 name,
                 library,
@@ -4852,15 +4765,13 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_wire_load_selection_group");
-    let library = env
-        .symbol("-library")
+    let command = symbol("set_wire_load_selection_group");
+    let library = symbol("-library")
         .with(parser(object))
         .map(|x| CommandArg::Library(x));
-    let min = env.symbol("-min").map(|_| CommandArg::Min);
-    let max = env.symbol("-max").map(|_| CommandArg::Max);
-    let group_name = env.identifier().map(|x| CommandArg::String(x));
+    let min = symbol("-min").map(|_| CommandArg::Min);
+    let max = symbol("-max").map(|_| CommandArg::Max);
+    let group_name = item().map(|x| CommandArg::String(x));
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
         attempt(library),
@@ -4887,7 +4798,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let group_name = group_name.unwrap();
+            let group_name = group_name.expect("set_wire_load_selection_group:group_name");
             Command::SetWireLoadSelectionGroup(SetWireLoadSelectionGroup {
                 library,
                 min,
@@ -4902,14 +4813,14 @@ where
 #[test]
 fn test_set_wire_load_selection_group() {
     let mut parser = parser(command);
-    let tgt = "set_wire_load_selection_group -library a -min -max a {a}";
+    let tgt = "set_wire_load_selection_group -library a -min -max a [all_clocks]";
     assert_eq!(
         Command::SetWireLoadSelectionGroup(SetWireLoadSelectionGroup {
             library: Some(Object::String(vec![String::from("a")])),
             min: true,
             max: true,
             group_name: String::from("a"),
-            object_list: Some(Object::String(vec![String::from("a")])),
+            object_list: Some(Object::AllClocks),
         }),
         parser.parse(tgt).unwrap().0
     );
@@ -4921,7 +4832,7 @@ fn test_set_wire_load_selection_group() {
 #[derive(Debug, Default, PartialEq)]
 pub struct CreateVoltageArea {
     pub name: String,
-    pub coordinate: Option<Object>,
+    pub coordinate: Vec<f64>,
     pub guard_band_x: Option<f64>,
     pub guard_band_y: Option<f64>,
     pub cell_list: Object,
@@ -4932,23 +4843,16 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("create_voltage_area");
-    let name = env
-        .symbol("-name")
-        .with(env.identifier())
-        .map(|x| CommandArg::Name(x));
-    let coordinate = env
-        .symbol("-coordinate")
-        .with(parser(object))
+    let command = symbol("create_voltage_area");
+    let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
+    let coordinate = symbol("-coordinate")
+        .with(braces(many1(float())))
         .map(|x| CommandArg::Coordinate(x));
-    let guard_band_x = env
-        .symbol("-guard_band_x")
-        .with(env.float())
+    let guard_band_x = symbol("-guard_band_x")
+        .with(float())
         .map(|x| CommandArg::GuardBandX(x));
-    let guard_band_y = env
-        .symbol("-guard_band_y")
-        .with(env.float())
+    let guard_band_y = symbol("-guard_band_y")
+        .with(float())
         .map(|x| CommandArg::GuardBandY(x));
     let cell_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (
@@ -4962,22 +4866,22 @@ where
         .with(many(choice(args)))
         .map(|xs: Vec<_>| {
             let mut name = None;
-            let mut coordinate = None;
+            let mut coordinate = Vec::new();
             let mut guard_band_x = None;
             let mut guard_band_y = None;
             let mut cell_list = None;
             for x in xs {
                 match x {
                     CommandArg::Name(x) => name = Some(x),
-                    CommandArg::Coordinate(x) => coordinate = Some(x),
+                    CommandArg::Coordinate(x) => coordinate = x,
                     CommandArg::GuardBandX(x) => guard_band_x = Some(x),
                     CommandArg::GuardBandY(x) => guard_band_y = Some(x),
                     CommandArg::Object(x) => cell_list = Some(x),
                     _ => unreachable!(),
                 }
             }
-            let name = name.unwrap();
-            let cell_list = cell_list.unwrap();
+            let name = name.expect("create_voltage_area:name");
+            let cell_list = cell_list.expect("create_voltage_area:cell_list");
             Command::CreateVoltageArea(CreateVoltageArea {
                 name,
                 coordinate,
@@ -4992,11 +4896,11 @@ where
 #[test]
 fn test_create_voltage_area() {
     let mut parser = parser(command);
-    let tgt = "create_voltage_area -name a -coordinate a -guard_band_x 0.1 -guard_band_y 0.1 a";
+    let tgt = "create_voltage_area -name a -coordinate {10 20 30 40} -guard_band_x 0.1 -guard_band_y 0.1 a";
     assert_eq!(
         Command::CreateVoltageArea(CreateVoltageArea {
             name: String::from("a"),
-            coordinate: Some(Object::String(vec![String::from("a")])),
+            coordinate: vec![10.0, 20.0, 30.0, 40.0],
             guard_band_x: Some(0.1),
             guard_band_y: Some(0.1),
             cell_list: Object::String(vec![String::from("a")]),
@@ -5018,12 +4922,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_level_shifter_strategy");
-    let rule = env
-        .symbol("-rule")
-        .with(env.identifier())
-        .map(|x| CommandArg::Rule(x));
+    let command = symbol("set_level_shifter_strategy");
+    let rule = symbol("-rule").with(item()).map(|x| CommandArg::Rule(x));
     let args = (attempt(rule),);
     command
         .with(many(choice(args)))
@@ -5066,15 +4966,12 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_level_shifter_threshold");
-    let voltage = env
-        .symbol("-voltage")
-        .with(env.float())
+    let command = symbol("set_level_shifter_threshold");
+    let voltage = symbol("-voltage")
+        .with(float())
         .map(|x| CommandArg::Voltage(x));
-    let percent = env
-        .symbol("-percent")
-        .with(env.float())
+    let percent = symbol("-percent")
+        .with(float())
         .map(|x| CommandArg::Percent(x));
     let args = (attempt(voltage), attempt(percent));
     command
@@ -5121,10 +5018,9 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_max_dynamic_power");
-    let power = env.float().map(|x| CommandArg::Value(x));
-    let unit = env.identifier().map(|x| CommandArg::String(x));
+    let command = symbol("set_max_dynamic_power");
+    let power = float().map(|x| CommandArg::Value(x));
+    let unit = item().map(|x| CommandArg::String(x));
     let args = (attempt(power), attempt(unit));
     command
         .with(many(choice(args)))
@@ -5138,7 +5034,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let power = power.unwrap();
+            let power = power.expect("set_max_dynamic_power:power");
             Command::SetMaxDynamicPower(SetMaxDynamicPower { power, unit })
         })
         .parse_stream(input)
@@ -5171,10 +5067,9 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("set_max_leakage_power");
-    let power = env.float().map(|x| CommandArg::Value(x));
-    let unit = env.identifier().map(|x| CommandArg::String(x));
+    let command = symbol("set_max_leakage_power");
+    let power = float().map(|x| CommandArg::Value(x));
+    let unit = item().map(|x| CommandArg::String(x));
     let args = (attempt(power), attempt(unit));
     command
         .with(many(choice(args)))
@@ -5188,7 +5083,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            let power = power.unwrap();
+            let power = power.expect("set_max_leakage_power:power");
             Command::SetMaxLeakagePower(SetMaxLeakagePower { power, unit })
         })
         .parse_stream(input)

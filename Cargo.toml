@@ -11,5 +11,7 @@ description = ""
 edition = "2018"
 
 [dependencies]
-combine          = "3.8.1"
-combine-language = "3.0.2"
+combine = "3.8.1"
+
+[dev-dependencies]
+walkdir = "2.2.7"

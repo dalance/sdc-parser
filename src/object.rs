@@ -1,4 +1,4 @@
-use crate::sdc::*;
+use crate::util::*;
 use combine::error::{ParseError, ParseResult};
 use combine::parser::Parser;
 use combine::{attempt, choice, many, many1, parser, Stream};
@@ -88,9 +88,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("all_clocks").map(|_| Object::AllClocks);
-    env.brackets(command).parse_stream(input)
+    let command = symbol("all_clocks").map(|_| Object::AllClocks);
+    brackets(command).parse_stream(input)
 }
 
 #[test]
@@ -115,24 +114,16 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("all_inputs");
-    let level_sensitive = env
-        .symbol("-level_sensitive")
-        .map(|_| ObjectArg::LevelSensitive);
-    let edge_triggered = env
-        .symbol("-edge_triggered")
-        .map(|_| ObjectArg::EdgeTriggered);
-    let clock = env
-        .symbol("-clock")
-        .with(env.identifier())
-        .map(|x| ObjectArg::Clock(x));
+    let command = symbol("all_inputs");
+    let level_sensitive = symbol("-level_sensitive").map(|_| ObjectArg::LevelSensitive);
+    let edge_triggered = symbol("-edge_triggered").map(|_| ObjectArg::EdgeTriggered);
+    let clock = symbol("-clock").with(item()).map(|x| ObjectArg::Clock(x));
     let args = (
         attempt(level_sensitive),
         attempt(edge_triggered),
         attempt(clock),
     );
-    env.brackets(command.with(many(choice(args))))
+    brackets(command.with(many(choice(args))))
         .map(|xs: Vec<_>| {
             let mut level_sensitive = false;
             let mut edge_triggered = false;
@@ -183,24 +174,16 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("all_outputs");
-    let level_sensitive = env
-        .symbol("-level_sensitive")
-        .map(|_| ObjectArg::LevelSensitive);
-    let edge_triggered = env
-        .symbol("-edge_triggered")
-        .map(|_| ObjectArg::EdgeTriggered);
-    let clock = env
-        .symbol("-clock")
-        .with(env.identifier())
-        .map(|x| ObjectArg::Clock(x));
+    let command = symbol("all_outputs");
+    let level_sensitive = symbol("-level_sensitive").map(|_| ObjectArg::LevelSensitive);
+    let edge_triggered = symbol("-edge_triggered").map(|_| ObjectArg::EdgeTriggered);
+    let clock = symbol("-clock").with(item()).map(|x| ObjectArg::Clock(x));
     let args = (
         attempt(level_sensitive),
         attempt(edge_triggered),
         attempt(clock),
     );
-    env.brackets(command.with(many(choice(args))))
+    brackets(command.with(many(choice(args))))
         .map(|xs: Vec<_>| {
             let mut level_sensitive = false;
             let mut edge_triggered = false;
@@ -262,40 +245,25 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("all_registers");
-    let no_hierarchy = env.symbol("-no_hierarchy").map(|_| ObjectArg::NoHierarchy);
-    let hsc = env
-        .symbol("-hsc")
-        .with(env.identifier())
-        .map(|x| ObjectArg::Hsc(x));
-    let clock = env
-        .symbol("-clock")
-        .with(env.identifier())
-        .map(|x| ObjectArg::Clock(x));
-    let rise_clock = env
-        .symbol("-rise_clock")
-        .with(env.identifier())
+    let command = symbol("all_registers");
+    let no_hierarchy = symbol("-no_hierarchy").map(|_| ObjectArg::NoHierarchy);
+    let hsc = symbol("-hsc").with(item()).map(|x| ObjectArg::Hsc(x));
+    let clock = symbol("-clock").with(item()).map(|x| ObjectArg::Clock(x));
+    let rise_clock = symbol("-rise_clock")
+        .with(item())
         .map(|x| ObjectArg::RiseClock(x));
-    let fall_clock = env
-        .symbol("-fall_clock")
-        .with(env.identifier())
+    let fall_clock = symbol("-fall_clock")
+        .with(item())
         .map(|x| ObjectArg::FallClock(x));
-    let cells = env.symbol("-cells").map(|_| ObjectArg::Cells);
-    let data_pins = env.symbol("-data_pins").map(|_| ObjectArg::DataPins);
-    let clock_pins = env.symbol("-clock_pins").map(|_| ObjectArg::ClockPins);
-    let slave_clock_pins = env
-        .symbol("-slave_clock_pins")
-        .map(|_| ObjectArg::SlaveClockPins);
-    let async_pins = env.symbol("-async_pins").map(|_| ObjectArg::AsyncPins);
-    let output_pins = env.symbol("-output_pins").map(|_| ObjectArg::OutputPins);
-    let level_sensitive = env
-        .symbol("-level_sensitive")
-        .map(|_| ObjectArg::LevelSensitive);
-    let edge_triggered = env
-        .symbol("-edge_triggered")
-        .map(|_| ObjectArg::EdgeTriggered);
-    let master_slave = env.symbol("-master_slave").map(|_| ObjectArg::MasterSlave);
+    let cells = symbol("-cells").map(|_| ObjectArg::Cells);
+    let data_pins = symbol("-data_pins").map(|_| ObjectArg::DataPins);
+    let clock_pins = symbol("-clock_pins").map(|_| ObjectArg::ClockPins);
+    let slave_clock_pins = symbol("-slave_clock_pins").map(|_| ObjectArg::SlaveClockPins);
+    let async_pins = symbol("-async_pins").map(|_| ObjectArg::AsyncPins);
+    let output_pins = symbol("-output_pins").map(|_| ObjectArg::OutputPins);
+    let level_sensitive = symbol("-level_sensitive").map(|_| ObjectArg::LevelSensitive);
+    let edge_triggered = symbol("-edge_triggered").map(|_| ObjectArg::EdgeTriggered);
+    let master_slave = symbol("-master_slave").map(|_| ObjectArg::MasterSlave);
     let args = (
         attempt(no_hierarchy),
         attempt(hsc),
@@ -312,7 +280,7 @@ where
         attempt(edge_triggered),
         attempt(master_slave),
     );
-    env.brackets(command.with(many(choice(args))))
+    brackets(command.with(many(choice(args))))
         .map(|xs: Vec<_>| {
             let mut no_hierarchy = false;
             let mut hsc = None;
@@ -399,9 +367,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("current_design").map(|_| Object::CurrentDesign);
-    env.brackets(command).parse_stream(input)
+    let command = symbol("current_design").map(|_| Object::CurrentDesign);
+    brackets(command).parse_stream(input)
 }
 
 #[test]
@@ -429,24 +396,17 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("get_cells");
-    let hierarchical = env.symbol("-hierarchical").map(|_| ObjectArg::Hierarchical);
-    let hsc = env
-        .symbol("-hsc")
-        .with(env.identifier())
-        .map(|x| ObjectArg::Hsc(x));
-    let regexp = env.symbol("-regexp").map(|_| ObjectArg::Regexp);
-    let nocase = env.symbol("-nocase").map(|_| ObjectArg::Nocase);
-    let of_objects = env
-        .symbol("-of_objects")
+    let command = attempt(symbol("get_cells")).or(symbol("get_cell"));
+    let hierarchical = symbol("-hierarchical").map(|_| ObjectArg::Hierarchical);
+    let hsc = symbol("-hsc").with(item()).map(|x| ObjectArg::Hsc(x));
+    let regexp = symbol("-regexp").map(|_| ObjectArg::Regexp);
+    let nocase = symbol("-nocase").map(|_| ObjectArg::Nocase);
+    let of_objects = attempt(symbol("-of_objects"))
+        .or(symbol("-of_object"))
         .with(parser(object))
         .map(|x| ObjectArg::OfObject(x));
-    let patterns = choice((
-        env.braces(many1(env.identifier())),
-        env.identifier().map(|x| vec![x]),
-    ))
-    .map(|x| ObjectArg::Patterns(x));
+    let patterns = choice((braces(parser(braces_strings)), item().map(|x| vec![x])))
+        .map(|x| ObjectArg::Patterns(x));
     let args = (
         attempt(hierarchical),
         attempt(hsc),
@@ -455,7 +415,7 @@ where
         attempt(of_objects),
         patterns,
     );
-    env.brackets(command.with(many(choice(args))))
+    brackets(command.with(many(choice(args))))
         .map(|xs: Vec<_>| {
             let mut hierarchical = false;
             let mut hsc = None;
@@ -537,17 +497,13 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("get_clocks");
-    let regexp = env.symbol("-regexp").map(|_| ObjectArg::Regexp);
-    let nocase = env.symbol("-nocase").map(|_| ObjectArg::Nocase);
-    let patterns = choice((
-        env.braces(many1(env.identifier())),
-        env.identifier().map(|x| vec![x]),
-    ))
-    .map(|x| ObjectArg::Patterns(x));
+    let command = attempt(symbol("get_clocks")).or(symbol("get_clock"));
+    let regexp = symbol("-regexp").map(|_| ObjectArg::Regexp);
+    let nocase = symbol("-nocase").map(|_| ObjectArg::Nocase);
+    let patterns = choice((braces(parser(braces_strings)), item().map(|x| vec![x])))
+        .map(|x| ObjectArg::Patterns(x));
     let args = (attempt(regexp), attempt(nocase), patterns);
-    env.brackets(command.with(many(choice(args))))
+    brackets(command.with(many(choice(args))))
         .map(|xs: Vec<_>| {
             let mut regexp = false;
             let mut nocase = false;
@@ -609,21 +565,14 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("get_lib_cells");
-    let hsc = env
-        .symbol("-hsc")
-        .with(env.identifier())
-        .map(|x| ObjectArg::Hsc(x));
-    let regexp = env.symbol("-regexp").map(|_| ObjectArg::Regexp);
-    let nocase = env.symbol("-nocase").map(|_| ObjectArg::Nocase);
-    let patterns = choice((
-        env.braces(many1(env.identifier())),
-        env.identifier().map(|x| vec![x]),
-    ))
-    .map(|x| ObjectArg::Patterns(x));
+    let command = attempt(symbol("get_lib_cells")).or(symbol("get_lib_cell"));
+    let hsc = symbol("-hsc").with(item()).map(|x| ObjectArg::Hsc(x));
+    let regexp = symbol("-regexp").map(|_| ObjectArg::Regexp);
+    let nocase = symbol("-nocase").map(|_| ObjectArg::Nocase);
+    let patterns = choice((braces(parser(braces_strings)), item().map(|x| vec![x])))
+        .map(|x| ObjectArg::Patterns(x));
     let args = (attempt(hsc), attempt(regexp), attempt(nocase), patterns);
-    env.brackets(command.with(many(choice(args))))
+    brackets(command.with(many(choice(args))))
         .map(|xs: Vec<_>| {
             let mut hsc = None;
             let mut regexp = false;
@@ -678,17 +627,13 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("get_lib_pins");
-    let regexp = env.symbol("-regexp").map(|_| ObjectArg::Regexp);
-    let nocase = env.symbol("-nocase").map(|_| ObjectArg::Nocase);
-    let patterns = choice((
-        env.braces(many1(env.identifier())),
-        env.identifier().map(|x| vec![x]),
-    ))
-    .map(|x| ObjectArg::Patterns(x));
+    let command = attempt(symbol("get_lib_pins")).or(symbol("get_lib_pin"));
+    let regexp = symbol("-regexp").map(|_| ObjectArg::Regexp);
+    let nocase = symbol("-nocase").map(|_| ObjectArg::Nocase);
+    let patterns = choice((braces(parser(braces_strings)), item().map(|x| vec![x])))
+        .map(|x| ObjectArg::Patterns(x));
     let args = (attempt(regexp), attempt(nocase), patterns);
-    env.brackets(command.with(many(choice(args))))
+    brackets(command.with(many(choice(args))))
         .map(|xs: Vec<_>| {
             let mut regexp = false;
             let mut nocase = false;
@@ -739,17 +684,13 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("get_libs");
-    let regexp = env.symbol("-regexp").map(|_| ObjectArg::Regexp);
-    let nocase = env.symbol("-nocase").map(|_| ObjectArg::Nocase);
-    let patterns = choice((
-        env.braces(many1(env.identifier())),
-        env.identifier().map(|x| vec![x]),
-    ))
-    .map(|x| ObjectArg::Patterns(x));
+    let command = symbol("get_libs");
+    let regexp = symbol("-regexp").map(|_| ObjectArg::Regexp);
+    let nocase = symbol("-nocase").map(|_| ObjectArg::Nocase);
+    let patterns = choice((braces(parser(braces_strings)), item().map(|x| vec![x])))
+        .map(|x| ObjectArg::Patterns(x));
     let args = (attempt(regexp), attempt(nocase), patterns);
-    env.brackets(command.with(many(choice(args))))
+    brackets(command.with(many(choice(args))))
         .map(|xs: Vec<_>| {
             let mut regexp = false;
             let mut nocase = false;
@@ -803,24 +744,17 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("get_nets");
-    let hierarchical = env.symbol("-hierarchical").map(|_| ObjectArg::Hierarchical);
-    let hsc = env
-        .symbol("-hsc")
-        .with(env.identifier())
-        .map(|x| ObjectArg::Hsc(x));
-    let regexp = env.symbol("-regexp").map(|_| ObjectArg::Regexp);
-    let nocase = env.symbol("-nocase").map(|_| ObjectArg::Nocase);
-    let of_objects = env
-        .symbol("-of_objects")
+    let command = attempt(symbol("get_nets")).or(symbol("get_net"));
+    let hierarchical = symbol("-hierarchical").map(|_| ObjectArg::Hierarchical);
+    let hsc = symbol("-hsc").with(item()).map(|x| ObjectArg::Hsc(x));
+    let regexp = symbol("-regexp").map(|_| ObjectArg::Regexp);
+    let nocase = symbol("-nocase").map(|_| ObjectArg::Nocase);
+    let of_objects = attempt(symbol("-of_objects"))
+        .or(symbol("-of_object"))
         .with(parser(object))
         .map(|x| ObjectArg::OfObject(x));
-    let patterns = choice((
-        env.braces(many1(env.identifier())),
-        env.identifier().map(|x| vec![x]),
-    ))
-    .map(|x| ObjectArg::Patterns(x));
+    let patterns = choice((braces(parser(braces_strings)), item().map(|x| vec![x])))
+        .map(|x| ObjectArg::Patterns(x));
     let args = (
         attempt(hierarchical),
         attempt(hsc),
@@ -829,7 +763,7 @@ where
         attempt(of_objects),
         patterns,
     );
-    env.brackets(command.with(many(choice(args))))
+    brackets(command.with(many(choice(args))))
         .map(|xs: Vec<_>| {
             let mut hierarchical = false;
             let mut hsc = None;
@@ -895,24 +829,17 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("get_pins");
-    let hierarchical = env.symbol("-hierarchical").map(|_| ObjectArg::Hierarchical);
-    let hsc = env
-        .symbol("-hsc")
-        .with(env.identifier())
-        .map(|x| ObjectArg::Hsc(x));
-    let regexp = env.symbol("-regexp").map(|_| ObjectArg::Regexp);
-    let nocase = env.symbol("-nocase").map(|_| ObjectArg::Nocase);
-    let of_objects = env
-        .symbol("-of_objects")
+    let command = attempt(symbol("get_pins")).or(symbol("get_pin"));
+    let hierarchical = symbol("-hierarchical").map(|_| ObjectArg::Hierarchical);
+    let hsc = symbol("-hsc").with(item()).map(|x| ObjectArg::Hsc(x));
+    let regexp = symbol("-regexp").map(|_| ObjectArg::Regexp);
+    let nocase = symbol("-nocase").map(|_| ObjectArg::Nocase);
+    let of_objects = attempt(symbol("-of_objects"))
+        .or(symbol("-of_object"))
         .with(parser(object))
         .map(|x| ObjectArg::OfObject(x));
-    let patterns = choice((
-        env.braces(many1(env.identifier())),
-        env.identifier().map(|x| vec![x]),
-    ))
-    .map(|x| ObjectArg::Patterns(x));
+    let patterns = choice((braces(parser(braces_strings)), item().map(|x| vec![x])))
+        .map(|x| ObjectArg::Patterns(x));
     let args = (
         attempt(hierarchical),
         attempt(hsc),
@@ -921,7 +848,7 @@ where
         attempt(of_objects),
         patterns,
     );
-    env.brackets(command.with(many(choice(args))))
+    brackets(command.with(many(choice(args))))
         .map(|xs: Vec<_>| {
             let mut hierarchical = false;
             let mut hsc = None;
@@ -984,17 +911,13 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("get_ports");
-    let regexp = env.symbol("-regexp").map(|_| ObjectArg::Regexp);
-    let nocase = env.symbol("-nocase").map(|_| ObjectArg::Nocase);
-    let patterns = choice((
-        env.braces(many1(env.identifier())),
-        env.identifier().map(|x| vec![x]),
-    ))
-    .map(|x| ObjectArg::Patterns(x));
+    let command = attempt(symbol("get_ports")).or(symbol("get_port"));
+    let regexp = symbol("-regexp").map(|_| ObjectArg::Regexp);
+    let nocase = symbol("-nocase").map(|_| ObjectArg::Nocase);
+    let patterns = choice((braces(parser(braces_strings)), item().map(|x| vec![x])))
+        .map(|x| ObjectArg::Patterns(x));
     let args = (attempt(regexp), attempt(nocase), patterns);
-    env.brackets(command.with(many(choice(args))))
+    brackets(command.with(many(choice(args))))
         .map(|xs: Vec<_>| {
             let mut regexp = false;
             let mut nocase = false;
@@ -1037,9 +960,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
-    let command = env.symbol("list");
-    env.brackets(command.with(many1(parser(object))))
+    let command = symbol("list");
+    brackets(command.with(many1(parser(object))))
         .map(|x| Object::List(x))
         .parse_stream(input)
 }
@@ -1072,12 +994,10 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let env = sdc_env();
     choice((
-        env.braces(many1(env.identifier())),
-        env.identifier().map(|x| vec![x]),
+        braces(parser(braces_strings).map(|x| Object::String(x))),
+        item().map(|x| Object::String(vec![x])),
     ))
-    .map(|x| Object::String(x))
     .parse_stream(input)
 }
 

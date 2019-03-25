@@ -1,5 +1,6 @@
 pub mod object;
 pub mod sdc;
+pub mod util;
 
 use crate::sdc::{sdc, Sdc};
 use combine::error::{ParseError, ParseResult};
@@ -37,31 +38,53 @@ where
 mod test {
     use super::*;
     use combine::stream::state::State;
-    use std::fs::{self, File};
+    use std::fs::File;
     use std::io::Read;
+    use walkdir::WalkDir;
 
     #[test]
-    fn test_sdc_parser_file() {
-        for entry in fs::read_dir("./pass").unwrap() {
-            let file = entry.unwrap().path();
-            let mut f = File::open(&file).unwrap();
-            let mut buf = String::new();
-            let _ = f.read_to_string(&mut buf);
+    fn test_sdc_parser_pass() {
+        for entry in WalkDir::new("./testcase/pass") {
+            if let Ok(entry) = entry {
+                if entry.file_type().is_dir() {
+                    continue;
+                }
+                let file = entry.path();
+                let mut f = File::open(&file).unwrap();
+                let mut buf = String::new();
+                let _ = f.read_to_string(&mut buf);
 
-            let mut parser = sdc_parser();
-            let ret = parser.easy_parse(State::new(buf.as_str()));
+                let file = dbg!(file);
 
-            assert!(ret.is_ok(), "Parse is failed at {:?}: {:?}", file, ret);
-            assert_eq!("", ret.unwrap().1.input, "Input is Remained at {:?}", file);
+                let mut parser = sdc_parser();
+                let ret = parser.easy_parse(State::new(buf.as_str()));
+
+                assert!(ret.is_ok(), "Parse is failed at {:?}: {:?}", file, ret);
+                assert_eq!("", ret.unwrap().1.input, "Input is Remained at {:?}", file);
+            }
         }
     }
 
     #[test]
-    fn test_sdc_parser_text() {
-        let tgt = "set_operating_conditions -library [get_libs a]\ncreate_clock -period 4.000000";
-        let mut parser = sdc_parser();
-        let ret = parser.easy_parse(State::new(tgt));
-        assert!(ret.is_ok(), "Parse is failed at {:?}", ret);
-        assert_eq!("", ret.unwrap().1.input);
+    #[should_panic]
+    fn test_sdc_parser_fail() {
+        for entry in WalkDir::new("./testcase/fail") {
+            if let Ok(entry) = entry {
+                if entry.file_type().is_dir() {
+                    continue;
+                }
+                let file = entry.path();
+                let mut f = File::open(&file).unwrap();
+                let mut buf = String::new();
+                let _ = f.read_to_string(&mut buf);
+
+                let file = dbg!(file);
+
+                let mut parser = sdc_parser();
+                let ret = parser.easy_parse(State::new(buf.as_str()));
+
+                assert!(ret.is_err(), "Parse is passed at {:?}: {:?}", file, ret);
+            }
+        }
     }
 }
