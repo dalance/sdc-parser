@@ -1,21 +1,21 @@
 use crate::object::*;
 use crate::util::*;
-use combine::char::{space, string};
+use combine::char::{char, space, string};
 use combine::error::{ParseError, ParseResult};
 use combine::parser::Parser;
-use combine::{attempt, choice, many, many1, none_of, optional, parser, token, Stream};
+use combine::{attempt, choice, look_ahead, many, many1, none_of, optional, parser, token, Stream};
 
 // -----------------------------------------------------------------------------
 
-/// Sdc
+/// A type representing sdc
 #[derive(Debug, Default, PartialEq)]
 pub struct Sdc {
-    commands: Vec<Command>,
+    pub commands: Vec<Command>,
 }
 
 // -----------------------------------------------------------------------------
 
-/// Command
+/// Enumeration on sdc command
 #[derive(Debug, PartialEq)]
 pub enum Command {
     LineBreak,
@@ -207,83 +207,115 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let general_purpose_commands = (
-        attempt(parser(current_instance)),
-        attempt(parser(set_sdc_version)),
-        attempt(parser(set)),
-        attempt(parser(set_units)),
-    );
-    let timing_constraints = (
-        attempt(parser(set_operating_conditions)),
+    let c = (
         attempt(parser(create_clock)),
         attempt(parser(create_generated_clock)),
-        attempt(parser(group_path)),
+        attempt(parser(create_voltage_area)),
+        attempt(parser(current_instance)),
+    );
+    let g = (parser(group_path),);
+    let set = (attempt(parser(set_sdc_version)), attempt(parser(set)));
+    let set_ca = (parser(set_case_analysis),);
+    let set_cl = (
         attempt(parser(set_clock_gating_check)),
         attempt(parser(set_clock_groups)),
         attempt(parser(set_clock_latency)),
-        attempt(parser(set_sense)),
         attempt(parser(set_clock_transition)),
         attempt(parser(set_clock_uncertainty)),
+    );
+    let set_d = (
         attempt(parser(set_data_check)),
         attempt(parser(set_disable_timing)),
+        attempt(parser(set_drive)),
+        attempt(parser(set_driving_cell)),
+    );
+    let set_f = (
         attempt(parser(set_false_path)),
+        attempt(parser(set_fanout_load)),
+    );
+    let set_id = (
         attempt(parser(set_ideal_latency)),
         attempt(parser(set_ideal_network)),
         attempt(parser(set_ideal_transition)),
-        attempt(parser(set_input_delay)),
-        attempt(parser(set_max_delay)),
-        attempt(parser(set_max_time_borrow)),
-        attempt(parser(set_min_delay)),
-        attempt(parser(set_min_pulse_width)),
-        attempt(parser(set_multicycle_path)),
-        attempt(parser(set_output_delay)),
-        attempt(parser(set_propagated_clock)),
     );
-    let environment_commands = (
-        attempt(parser(set_case_analysis)),
-        attempt(parser(set_drive)),
-        attempt(parser(set_driving_cell)),
-        attempt(parser(set_fanout_load)),
+    let set_in = (
+        attempt(parser(set_input_delay)),
         attempt(parser(set_input_transition)),
+    );
+    let set_le = (
+        attempt(parser(set_level_shifter_strategy)),
+        attempt(parser(set_level_shifter_threshold)),
+    );
+    let set_lo = (
         attempt(parser(set_load)),
         attempt(parser(set_logic_dc)),
         attempt(parser(set_logic_one)),
         attempt(parser(set_logic_zero)),
+    );
+    let set_ma = (
+        attempt(parser(set_max_delay)),
+        attempt(parser(set_max_time_borrow)),
         attempt(parser(set_max_area)),
         attempt(parser(set_max_capacitance)),
         attempt(parser(set_max_fanout)),
         attempt(parser(set_max_transition)),
+        attempt(parser(set_max_dynamic_power)),
+        attempt(parser(set_max_leakage_power)),
+    );
+    let set_mi = (
+        attempt(parser(set_min_delay)),
+        attempt(parser(set_min_pulse_width)),
         attempt(parser(set_min_capacitance)),
         attempt(parser(set_min_porosity)),
+    );
+    let set_mu = (parser(set_multicycle_path),);
+    let set_o = (
+        attempt(parser(set_operating_conditions)),
+        attempt(parser(set_output_delay)),
+    );
+    let set_p = (
+        attempt(parser(set_propagated_clock)),
         attempt(parser(set_port_fanout_number)),
-        attempt(parser(set_resistance)),
-        attempt(parser(set_timing_derate)),
-        attempt(parser(set_voltage)),
+    );
+    let set_w = (
         attempt(parser(set_wire_load_min_block_size)),
         attempt(parser(set_wire_load_model)),
         attempt(parser(set_wire_load_mode)),
         attempt(parser(set_wire_load_selection_group)),
     );
-    let multivoltage_and_power_optimization_commands = (
-        attempt(parser(create_voltage_area)),
-        attempt(parser(set_level_shifter_strategy)),
-        attempt(parser(set_level_shifter_threshold)),
-        attempt(parser(set_max_dynamic_power)),
-        attempt(parser(set_max_leakage_power)),
+    let set__ = (
+        attempt(parser(set_resistance)),
+        attempt(parser(set_sense)),
+        attempt(parser(set_timing_derate)),
+        attempt(parser(set_units)),
+        attempt(parser(set_voltage)),
     );
-    let other = (
-        attempt(parser(linebreak)),
-        attempt(parser(comment)),
-        attempt(parser(whitespace)),
-    );
-    let items = (
-        choice(general_purpose_commands),
-        choice(timing_constraints),
-        choice(environment_commands),
-        choice(multivoltage_and_power_optimization_commands),
-        choice(other),
-    );
-    choice(items).parse_stream(input)
+
+    choice((
+        look_ahead(space()).with(parser(whitespace)),
+        look_ahead(char('\n')).with(parser(linebreak)),
+        look_ahead(string("\r\n")).with(parser(linebreak)),
+        look_ahead(char('#')).with(parser(comment)),
+        look_ahead(char('c')).with(choice(c)),
+        look_ahead(char('g')).with(choice(g)),
+        attempt(look_ahead(string("set ")).with(choice(set))),
+        attempt(look_ahead(string("set_ca")).with(choice(set_ca))),
+        attempt(look_ahead(string("set_cl")).with(choice(set_cl))),
+        attempt(look_ahead(string("set_d")).with(choice(set_d))),
+        attempt(look_ahead(string("set_f")).with(choice(set_f))),
+        attempt(look_ahead(string("set_id")).with(choice(set_id))),
+        attempt(look_ahead(string("set_in")).with(choice(set_in))),
+        attempt(look_ahead(string("set_le")).with(choice(set_le))),
+        attempt(look_ahead(string("set_lo")).with(choice(set_lo))),
+        attempt(look_ahead(string("set_ma")).with(choice(set_ma))),
+        attempt(look_ahead(string("set_mi")).with(choice(set_mi))),
+        attempt(look_ahead(string("set_mu")).with(choice(set_mu))),
+        attempt(look_ahead(string("set_o")).with(choice(set_o))),
+        attempt(look_ahead(string("set_p")).with(choice(set_p))),
+        attempt(look_ahead(string("set_w")).with(choice(set_w))),
+        choice(set__),
+    ))
+    .parse_stream(input)
 }
 
 // -----------------------------------------------------------------------------

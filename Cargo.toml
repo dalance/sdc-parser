@@ -3,15 +3,29 @@ name = "sdc-parser"
 version = "0.1.0"
 authors = ["dalance@gmail.com"]
 repository = "https://github.com/dalance/sdc-parser"
-keywords = []
-categories = []
+keywords = ["parser"]
+categories = ["parser-implementations"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-description = ""
+description = "A parser library for Synopsys Design Constraints (sdc)"
 edition = "2018"
 
 [dependencies]
 combine = "3.8.1"
 
+[build-dependencies]
+skeptic = "0.13"
+
 [dev-dependencies]
+skeptic = "0.13"
 walkdir = "2.2.7"
+
+[package.metadata.release]
+dev-version-ext            = "pre"
+pre-release-commit-message = "Prepare to v{{version}}"
+pro-release-commit-message = "Start next development iteration v{{version}}"
+pre-release-replacements   = [
+    { file = "README.md", search = "sdc-parser = \"[a-z0-9\\.-]+\"", replace = "sdc-parser = \"{{version}}\"" },
+]
+tag-message                = "Bump version to {{version}}"
+tag-prefix                 = "v"

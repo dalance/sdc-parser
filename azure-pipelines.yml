@@ -1,0 +1,56 @@
+trigger:
+    branches:
+        include:
+            - '*'
+    tags:
+        include:
+            - '*'
+
+resources:
+    containers:
+        - container: tarpaulin
+          image: xd009642/tarpaulin:latest-nightly
+          options: --security-opt seccomp=unconfined
+
+jobs:
+    - job: Linux
+      pool:
+          vmImage: 'ubuntu-16.04'
+      steps:
+          - script: |
+              curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable
+              echo '##vso[task.setvariable variable=PATH]$(PATH):$(HOME)/.cargo/bin'
+            displayName: Install rustup
+
+          - script: |
+              cargo install cargo2junit
+              rustup target add x86_64-unknown-linux-musl
+              sudo apt-get -qq install musl-tools
+            displayName: Install tools
+
+          - script: |
+              cargo test -- -Z unstable-options --format json | cargo2junit > results.xml
+            displayName: Run test
+
+          - task: PublishTestResults@2
+            inputs:
+                testResultsFormat: 'JUnit'
+                testResultsFiles: 'results.xml'
+            condition: succeededOrFailed()
+
+    - job: Coverage
+      pool:
+          vmImage: 'ubuntu-16.04'
+      container: tarpaulin
+      steps:
+          - script: |
+              cargo tarpaulin -v --out Xml
+              curl -s https://codecov.io/bash -o .codecov && chmod +x .codecov
+              ./.codecov -B "${BUILD_SOURCEBRANCHNAME:-}" \
+                         -C "${BUILD_SOURCEVERSION:-}" \
+                         -P "${SYSTEM_PULLREQUEST_PULLREQUESTNUMBER:-}" \
+                         -b "${BUILD_BUILDID:-}" \
+                         -K -n "report name"
+            displayName: Run tarpaulin
+            env:
+                CODECOV_TOKEN: $(CODECOV_TOKEN)

@@ -7,7 +7,7 @@ use combine::error::{ParseError, ParseResult};
 use combine::{parser, Parser, Stream};
 use std::marker::PhantomData;
 
-/// SdcParser
+/// A type representing sdc parser
 pub struct SdcParser<I>(PhantomData<fn(I) -> I>);
 
 impl<I> Parser for SdcParser<I>
@@ -25,7 +25,26 @@ where
     }
 }
 
-/// sdc_parser
+/// Generate sdc parser
+///
+/// # Examples
+///
+/// ```
+/// use sdc_parser::{sdc_parser, sdc};
+/// use combine::parser::Parser;
+///
+/// let mut parser = sdc_parser();
+/// let (result, rest) = parser.parse("current_instance duv").unwrap();
+///
+/// let expect = sdc::Sdc {
+///     commands: vec![sdc::Command::CurrentInstance(
+///         sdc::CurrentInstance {
+///             instance: Some(String::from("duv"))
+///         }
+///     )]
+/// };
+/// assert_eq!(expect, result);
+/// ```
 pub fn sdc_parser<I>() -> SdcParser<I>
 where
     I: Stream<Item = char>,
