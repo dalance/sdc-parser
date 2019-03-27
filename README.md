@@ -17,7 +17,7 @@ sdc_parser = "0.1.0"
 
 ```rust
 fn main() {
-    let result = sdc_parser.parse("current_instance duv");
+    let result = sdc_parser::parse("current_instance duv");
 
     let expect = sdc::Sdc {
         commands: vec![sdc::Command::CurrentInstance(
