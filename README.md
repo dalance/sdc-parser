@@ -16,6 +16,8 @@ sdc_parser = "0.1.0"
 ## Example
 
 ```rust
+use sdc_parser::{self, sdc};
+
 fn main() {
     let result = sdc_parser::parse("current_instance duv");
 
