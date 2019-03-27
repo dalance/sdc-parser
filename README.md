@@ -15,15 +15,9 @@ sdc_parser = "0.1.0"
 
 ## Example
 
-sdc-parser uses [combine](https://github.com/Marwes/combine). So `use combine::parser::Parser` is required.
-
 ```rust
-use sdc_parser::{sdc_parser, sdc};
-use combine::parser::Parser;
-
 fn main() {
-    let mut parser = sdc_parser();
-    let (result, rest) = parser.parse("current_instance duv").unwrap();
+    let result = sdc_parser.parse("current_instance duv");
 
     let expect = sdc::Sdc {
         commands: vec![sdc::Command::CurrentInstance(
