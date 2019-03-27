@@ -2,17 +2,18 @@ use crate::util::*;
 use combine::error::{ParseError, ParseResult};
 use combine::parser::Parser;
 use combine::{attempt, choice, many, many1, parser, Stream};
+use std::fmt;
 
 // -----------------------------------------------------------------------------
 
 /// Object
 #[derive(Clone, Debug, PartialEq)]
 pub enum Object {
-    AllClocks,
+    AllClocks(AllClocks),
     AllInputs(AllInputs),
     AllOutputs(AllOutputs),
     AllRegisters(AllRegisters),
-    CurrentDesign,
+    CurrentDesign(CurrentDesign),
     GetCells(GetCells),
     GetClocks(GetClocks),
     GetLibCells(GetLibCells),
@@ -21,14 +22,37 @@ pub enum Object {
     GetNets(GetNets),
     GetPins(GetPins),
     GetPorts(GetPorts),
-    List(Vec<Object>),
-    String(Vec<String>),
+    List(List),
+    String(ObjectString),
     Unknown,
 }
 
 impl Default for Object {
     fn default() -> Self {
         Object::Unknown
+    }
+}
+
+impl fmt::Display for Object {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Object::AllClocks(x) => write!(f, "{}", x),
+            Object::AllInputs(x) => write!(f, "{}", x),
+            Object::AllOutputs(x) => write!(f, "{}", x),
+            Object::AllRegisters(x) => write!(f, "{}", x),
+            Object::CurrentDesign(x) => write!(f, "{}", x),
+            Object::GetCells(x) => write!(f, "{}", x),
+            Object::GetClocks(x) => write!(f, "{}", x),
+            Object::GetLibCells(x) => write!(f, "{}", x),
+            Object::GetLibPins(x) => write!(f, "{}", x),
+            Object::GetLibs(x) => write!(f, "{}", x),
+            Object::GetNets(x) => write!(f, "{}", x),
+            Object::GetPins(x) => write!(f, "{}", x),
+            Object::GetPorts(x) => write!(f, "{}", x),
+            Object::List(x) => write!(f, "{}", x),
+            Object::String(x) => write!(f, "{}", x),
+            Object::Unknown => write!(f, ""),
+        }
     }
 }
 
@@ -83,12 +107,22 @@ enum ObjectArg {
 
 // -----------------------------------------------------------------------------
 
+/// A type containing information of `all_clocks`
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AllClocks;
+
+impl fmt::Display for AllClocks {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[all_clocks]")
+    }
+}
+
 fn all_clocks<I>() -> impl Parser<Input = I, Output = Object>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let command = symbol("all_clocks").map(|_| Object::AllClocks);
+    let command = symbol("all_clocks").map(|_| Object::AllClocks(AllClocks {}));
     brackets(command)
 }
 
@@ -96,7 +130,9 @@ where
 fn test_all_clocks() {
     let mut parser = parser(object);
     let tgt = "[all_clocks]";
-    assert_eq!(Object::AllClocks, parser.parse(tgt).unwrap().0);
+    let ret = parser.parse(tgt).unwrap().0;
+    assert_eq!(Object::AllClocks(AllClocks {}), ret);
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
@@ -107,6 +143,22 @@ pub struct AllInputs {
     pub level_sensitive: bool,
     pub edge_triggered: bool,
     pub clock: Option<String>,
+}
+
+impl fmt::Display for AllInputs {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        if self.level_sensitive {
+            args.push_str(" -level_sensitive");
+        }
+        if self.edge_triggered {
+            args.push_str(" -edge_triggered");
+        }
+        if let Some(clock) = &self.clock {
+            args.push_str(&format!(" -clock {}", clock));
+        }
+        write!(f, "[all_inputs{}]", args)
+    }
 }
 
 fn all_inputs<I>() -> impl Parser<Input = I, Output = Object>
@@ -146,15 +198,17 @@ where
 #[test]
 fn test_all_inputs() {
     let mut parser = parser(object);
-    let tgt = "[all_inputs -edge_triggered -clock clk]";
+    let tgt = "[all_inputs -level_sensitive -edge_triggered -clock a]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::AllInputs(AllInputs {
-            level_sensitive: false,
+            level_sensitive: true,
             edge_triggered: true,
-            clock: Some(String::from("clk")),
+            clock: Some(String::from("a")),
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
@@ -165,6 +219,22 @@ pub struct AllOutputs {
     pub level_sensitive: bool,
     pub edge_triggered: bool,
     pub clock: Option<String>,
+}
+
+impl fmt::Display for AllOutputs {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        if self.level_sensitive {
+            args.push_str(" -level_sensitive");
+        }
+        if self.edge_triggered {
+            args.push_str(" -edge_triggered");
+        }
+        if let Some(clock) = &self.clock {
+            args.push_str(&format!(" -clock {}", clock));
+        }
+        write!(f, "[all_outputs{}]", args)
+    }
 }
 
 fn all_outputs<I>() -> impl Parser<Input = I, Output = Object>
@@ -204,15 +274,17 @@ where
 #[test]
 fn test_all_outputs() {
     let mut parser = parser(object);
-    let tgt = "[all_outputs -level_sensitive]";
+    let tgt = "[all_outputs -level_sensitive -edge_triggered -clock a]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::AllOutputs(AllOutputs {
             level_sensitive: true,
-            edge_triggered: false,
-            clock: None,
+            edge_triggered: true,
+            clock: Some(String::from("a")),
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
@@ -234,6 +306,55 @@ pub struct AllRegisters {
     pub level_sensitive: bool,
     pub edge_triggered: bool,
     pub master_slave: bool,
+}
+
+impl fmt::Display for AllRegisters {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        if self.no_hierarchy {
+            args.push_str(" -no_hierarchy");
+        }
+        if let Some(hsc) = &self.hsc {
+            args.push_str(&format!(" -hsc {}", hsc));
+        }
+        if let Some(clock) = &self.clock {
+            args.push_str(&format!(" -clock {}", clock));
+        }
+        if let Some(rise_clock) = &self.rise_clock {
+            args.push_str(&format!(" -rise_clock {}", rise_clock));
+        }
+        if let Some(fall_clock) = &self.fall_clock {
+            args.push_str(&format!(" -fall_clock {}", fall_clock));
+        }
+        if self.cells {
+            args.push_str(" -cells");
+        }
+        if self.data_pins {
+            args.push_str(" -data_pins");
+        }
+        if self.clock_pins {
+            args.push_str(" -clock_pins");
+        }
+        if self.slave_clock_pins {
+            args.push_str(" -slave_clock_pins");
+        }
+        if self.async_pins {
+            args.push_str(" -async_pins");
+        }
+        if self.output_pins {
+            args.push_str(" -output_pins");
+        }
+        if self.level_sensitive {
+            args.push_str(" -level_sensitive");
+        }
+        if self.edge_triggered {
+            args.push_str(" -edge_triggered");
+        }
+        if self.master_slave {
+            args.push_str(" -master_slave");
+        }
+        write!(f, "[all_registers{}]", args)
+    }
 }
 
 fn all_registers<I>() -> impl Parser<Input = I, Output = Object>
@@ -332,14 +453,15 @@ where
 #[test]
 fn test_all_registers() {
     let mut parser = parser(object);
-    let tgt = "[all_registers -no_hierarchy -hsc a -clock b -rise_clock c -fall_clock d -cells -data_pins -clock_pins -slave_clock_pins -async_pins -output_pins -level_sensitive -edge_triggered -master_slave]";
+    let tgt = "[all_registers -no_hierarchy -hsc a -clock a -rise_clock a -fall_clock a -cells -data_pins -clock_pins -slave_clock_pins -async_pins -output_pins -level_sensitive -edge_triggered -master_slave]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::AllRegisters(AllRegisters {
             no_hierarchy: true,
             hsc: Some(String::from("a")),
-            clock: Some(String::from("b")),
-            rise_clock: Some(String::from("c")),
-            fall_clock: Some(String::from("d")),
+            clock: Some(String::from("a")),
+            rise_clock: Some(String::from("a")),
+            fall_clock: Some(String::from("a")),
             cells: true,
             data_pins: true,
             clock_pins: true,
@@ -350,18 +472,29 @@ fn test_all_registers() {
             edge_triggered: true,
             master_slave: true,
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
+
+/// A type containing information of `current_design`
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CurrentDesign;
+
+impl fmt::Display for CurrentDesign {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[current_design]")
+    }
+}
 
 fn current_design<I>() -> impl Parser<Input = I, Output = Object>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let command = symbol("current_design").map(|_| Object::CurrentDesign);
+    let command = symbol("current_design").map(|_| Object::CurrentDesign(CurrentDesign {}));
     brackets(command)
 }
 
@@ -369,7 +502,9 @@ where
 fn test_current_design() {
     let mut parser = parser(object);
     let tgt = "[current_design]";
-    assert_eq!(Object::CurrentDesign, parser.parse(tgt).unwrap().0);
+    let ret = parser.parse(tgt).unwrap().0;
+    assert_eq!(Object::CurrentDesign(CurrentDesign {}), ret);
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
@@ -383,6 +518,41 @@ pub struct GetCells {
     pub nocase: bool,
     pub of_objects: Option<Box<Object>>,
     pub patterns: Vec<String>,
+}
+
+impl fmt::Display for GetCells {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        if self.hierarchical {
+            args.push_str(" -hierarchical");
+        }
+        if let Some(hsc) = &self.hsc {
+            args.push_str(&format!(" -hsc {}", hsc));
+        }
+        if self.regexp {
+            args.push_str(" -regexp");
+        }
+        if self.nocase {
+            args.push_str(" -nocase");
+        }
+        if let Some(of_objects) = &self.of_objects {
+            args.push_str(&format!(" -of_objects {}", of_objects));
+        }
+        if self.patterns.len() == 1 {
+            args.push_str(&format!(" {}", self.patterns[0]));
+        } else if self.patterns.len() > 1 {
+            args.push_str(" {");
+            for (i, s) in self.patterns.iter().enumerate() {
+                if i == 0 {
+                    args.push_str(&format!("{}", s));
+                } else {
+                    args.push_str(&format!(" {}", s));
+                }
+            }
+            args.push_str("}");
+        }
+        write!(f, "[get_cells{}]", args)
+    }
 }
 
 fn get_cells<I>() -> impl Parser<Input = I, Output = Object>
@@ -441,37 +611,39 @@ where
 #[test]
 fn test_get_cells() {
     let mut parser = parser(object);
-    let tgt = "[get_cells {c1 c2}]";
+    let tgt = "[get_cells -hierarchical -hsc a -regexp -nocase -of_objects a a]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::GetCells(GetCells {
-            hierarchical: false,
-            hsc: None,
-            regexp: false,
-            nocase: false,
-            of_objects: None,
-            patterns: vec![String::from("c1"), String::from("c2")]
-        }),
-        parser.parse(tgt).unwrap().0
-    );
-    let tgt = "[get_cells -of_objects [get_nets n1]]";
-    assert_eq!(
-        Object::GetCells(GetCells {
-            hierarchical: false,
-            hsc: None,
-            regexp: false,
-            nocase: false,
-            of_objects: Some(Box::new(Object::GetNets(GetNets {
-                hierarchical: false,
-                hsc: None,
-                regexp: false,
-                nocase: false,
-                of_objects: None,
-                patterns: vec![String::from("n1")]
+            hierarchical: true,
+            hsc: Some(String::from("a")),
+            regexp: true,
+            nocase: true,
+            of_objects: Some(Box::new(Object::String(ObjectString {
+                strings: vec![String::from("a")]
             }))),
-            patterns: vec![]
+            patterns: vec![String::from("a")]
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
+
+    let tgt = "[get_cells -hierarchical -hsc a -regexp -nocase -of_objects a {a a}]";
+    let ret = parser.parse(tgt).unwrap().0;
+    assert_eq!(
+        Object::GetCells(GetCells {
+            hierarchical: true,
+            hsc: Some(String::from("a")),
+            regexp: true,
+            nocase: true,
+            of_objects: Some(Box::new(Object::String(ObjectString {
+                strings: vec![String::from("a")]
+            }))),
+            patterns: vec![String::from("a"), String::from("a")]
+        }),
+        ret
+    );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
@@ -482,6 +654,32 @@ pub struct GetClocks {
     pub regexp: bool,
     pub nocase: bool,
     pub patterns: Vec<String>,
+}
+
+impl fmt::Display for GetClocks {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        if self.regexp {
+            args.push_str(" -regexp");
+        }
+        if self.nocase {
+            args.push_str(" -nocase");
+        }
+        if self.patterns.len() == 1 {
+            args.push_str(&format!(" {}", self.patterns[0]));
+        } else if self.patterns.len() > 1 {
+            args.push_str(" {");
+            for (i, s) in self.patterns.iter().enumerate() {
+                if i == 0 {
+                    args.push_str(&format!("{}", s));
+                } else {
+                    args.push_str(&format!(" {}", s));
+                }
+            }
+            args.push_str("}");
+        }
+        write!(f, "[get_clocks{}]", args)
+    }
 }
 
 fn get_clocks<I>() -> impl Parser<Input = I, Output = Object>
@@ -518,25 +716,29 @@ where
 #[test]
 fn test_get_clocks() {
     let mut parser = parser(object);
-    let tgt = "[get_clocks clk1]";
+    let tgt = "[get_clocks -regexp -nocase a]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::GetClocks(GetClocks {
-            regexp: false,
-            nocase: false,
-            patterns: vec![String::from("clk1")]
+            regexp: true,
+            nocase: true,
+            patterns: vec![String::from("a")]
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
 
-    let tgt = "[get_clocks {clk1 clk2}]";
+    let tgt = "[get_clocks -regexp -nocase {a a}]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::GetClocks(GetClocks {
-            regexp: false,
-            nocase: false,
-            patterns: vec![String::from("clk1"), String::from("clk2")]
+            regexp: true,
+            nocase: true,
+            patterns: vec![String::from("a"), String::from("a")]
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
@@ -548,6 +750,35 @@ pub struct GetLibCells {
     pub regexp: bool,
     pub nocase: bool,
     pub patterns: Vec<String>,
+}
+
+impl fmt::Display for GetLibCells {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        if let Some(hsc) = &self.hsc {
+            args.push_str(&format!(" -hsc {}", hsc));
+        }
+        if self.regexp {
+            args.push_str(" -regexp");
+        }
+        if self.nocase {
+            args.push_str(" -nocase");
+        }
+        if self.patterns.len() == 1 {
+            args.push_str(&format!(" {}", self.patterns[0]));
+        } else if self.patterns.len() > 1 {
+            args.push_str(" {");
+            for (i, s) in self.patterns.iter().enumerate() {
+                if i == 0 {
+                    args.push_str(&format!("{}", s));
+                } else {
+                    args.push_str(&format!(" {}", s));
+                }
+            }
+            args.push_str("}");
+        }
+        write!(f, "[get_lib_cells{}]", args)
+    }
 }
 
 fn get_lib_cells<I>() -> impl Parser<Input = I, Output = Object>
@@ -588,16 +819,31 @@ where
 #[test]
 fn test_get_lib_cells() {
     let mut parser = parser(object);
-    let tgt = "[get_lib_cells {c1 c2}]";
+    let tgt = "[get_lib_cells -hsc a -regexp -nocase a]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::GetLibCells(GetLibCells {
-            hsc: None,
-            regexp: false,
-            nocase: false,
-            patterns: vec![String::from("c1"), String::from("c2")]
+            hsc: Some(String::from("a")),
+            regexp: true,
+            nocase: true,
+            patterns: vec![String::from("a")]
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
+
+    let tgt = "[get_lib_cells -hsc a -regexp -nocase {a a}]";
+    let ret = parser.parse(tgt).unwrap().0;
+    assert_eq!(
+        Object::GetLibCells(GetLibCells {
+            hsc: Some(String::from("a")),
+            regexp: true,
+            nocase: true,
+            patterns: vec![String::from("a"), String::from("a")]
+        }),
+        ret
+    );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
@@ -608,6 +854,32 @@ pub struct GetLibPins {
     pub regexp: bool,
     pub nocase: bool,
     pub patterns: Vec<String>,
+}
+
+impl fmt::Display for GetLibPins {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        if self.regexp {
+            args.push_str(" -regexp");
+        }
+        if self.nocase {
+            args.push_str(" -nocase");
+        }
+        if self.patterns.len() == 1 {
+            args.push_str(&format!(" {}", self.patterns[0]));
+        } else if self.patterns.len() > 1 {
+            args.push_str(" {");
+            for (i, s) in self.patterns.iter().enumerate() {
+                if i == 0 {
+                    args.push_str(&format!("{}", s));
+                } else {
+                    args.push_str(&format!(" {}", s));
+                }
+            }
+            args.push_str("}");
+        }
+        write!(f, "[get_lib_pins{}]", args)
+    }
 }
 
 fn get_lib_pins<I>() -> impl Parser<Input = I, Output = Object>
@@ -644,15 +916,29 @@ where
 #[test]
 fn test_get_lib_pins() {
     let mut parser = parser(object);
-    let tgt = "[get_lib_pins {c1 c2}]";
+    let tgt = "[get_lib_pins -regexp -nocase a]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::GetLibPins(GetLibPins {
-            regexp: false,
-            nocase: false,
-            patterns: vec![String::from("c1"), String::from("c2")]
+            regexp: true,
+            nocase: true,
+            patterns: vec![String::from("a")]
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
+
+    let tgt = "[get_lib_pins -regexp -nocase {a a}]";
+    let ret = parser.parse(tgt).unwrap().0;
+    assert_eq!(
+        Object::GetLibPins(GetLibPins {
+            regexp: true,
+            nocase: true,
+            patterns: vec![String::from("a"), String::from("a")]
+        }),
+        ret
+    );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
@@ -663,6 +949,32 @@ pub struct GetLibs {
     pub regexp: bool,
     pub nocase: bool,
     pub patterns: Vec<String>,
+}
+
+impl fmt::Display for GetLibs {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        if self.regexp {
+            args.push_str(" -regexp");
+        }
+        if self.nocase {
+            args.push_str(" -nocase");
+        }
+        if self.patterns.len() == 1 {
+            args.push_str(&format!(" {}", self.patterns[0]));
+        } else if self.patterns.len() > 1 {
+            args.push_str(" {");
+            for (i, s) in self.patterns.iter().enumerate() {
+                if i == 0 {
+                    args.push_str(&format!("{}", s));
+                } else {
+                    args.push_str(&format!(" {}", s));
+                }
+            }
+            args.push_str("}");
+        }
+        write!(f, "[get_libs{}]", args)
+    }
 }
 
 fn get_libs<I>() -> impl Parser<Input = I, Output = Object>
@@ -699,15 +1011,29 @@ where
 #[test]
 fn test_get_libs() {
     let mut parser = parser(object);
-    let tgt = "[get_libs {c1 c2}]";
+    let tgt = "[get_libs -regexp -nocase a]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::GetLibs(GetLibs {
-            regexp: false,
-            nocase: false,
-            patterns: vec![String::from("c1"), String::from("c2")]
+            regexp: true,
+            nocase: true,
+            patterns: vec![String::from("a")]
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
+
+    let tgt = "[get_libs -regexp -nocase {a a}]";
+    let ret = parser.parse(tgt).unwrap().0;
+    assert_eq!(
+        Object::GetLibs(GetLibs {
+            regexp: true,
+            nocase: true,
+            patterns: vec![String::from("a"), String::from("a")]
+        }),
+        ret
+    );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
@@ -721,6 +1047,41 @@ pub struct GetNets {
     pub nocase: bool,
     pub of_objects: Option<Box<Object>>,
     pub patterns: Vec<String>,
+}
+
+impl fmt::Display for GetNets {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        if self.hierarchical {
+            args.push_str(" -hierarchical");
+        }
+        if let Some(hsc) = &self.hsc {
+            args.push_str(&format!(" -hsc {}", hsc));
+        }
+        if self.regexp {
+            args.push_str(" -regexp");
+        }
+        if self.nocase {
+            args.push_str(" -nocase");
+        }
+        if let Some(of_objects) = &self.of_objects {
+            args.push_str(&format!(" -of_objects {}", of_objects));
+        }
+        if self.patterns.len() == 1 {
+            args.push_str(&format!(" {}", self.patterns[0]));
+        } else if self.patterns.len() > 1 {
+            args.push_str(" {");
+            for (i, s) in self.patterns.iter().enumerate() {
+                if i == 0 {
+                    args.push_str(&format!("{}", s));
+                } else {
+                    args.push_str(&format!(" {}", s));
+                }
+            }
+            args.push_str("}");
+        }
+        write!(f, "[get_nets{}]", args)
+    }
 }
 
 fn get_nets<I>() -> impl Parser<Input = I, Output = Object>
@@ -779,18 +1140,39 @@ where
 #[test]
 fn test_get_nets() {
     let mut parser = parser(object);
-    let tgt = "[get_nets {c1 c2}]";
+    let tgt = "[get_nets -hierarchical -hsc a -regexp -nocase -of_objects a a]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::GetNets(GetNets {
-            hierarchical: false,
-            hsc: None,
-            regexp: false,
-            nocase: false,
-            of_objects: None,
-            patterns: vec![String::from("c1"), String::from("c2")]
+            hierarchical: true,
+            hsc: Some(String::from("a")),
+            regexp: true,
+            nocase: true,
+            of_objects: Some(Box::new(Object::String(ObjectString {
+                strings: vec![String::from("a")]
+            }))),
+            patterns: vec![String::from("a")]
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
+
+    let tgt = "[get_nets -hierarchical -hsc a -regexp -nocase -of_objects a {a a}]";
+    let ret = parser.parse(tgt).unwrap().0;
+    assert_eq!(
+        Object::GetNets(GetNets {
+            hierarchical: true,
+            hsc: Some(String::from("a")),
+            regexp: true,
+            nocase: true,
+            of_objects: Some(Box::new(Object::String(ObjectString {
+                strings: vec![String::from("a")]
+            }))),
+            patterns: vec![String::from("a"), String::from("a")]
+        }),
+        ret
+    );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
@@ -804,6 +1186,41 @@ pub struct GetPins {
     pub nocase: bool,
     pub of_objects: Option<Box<Object>>,
     pub patterns: Vec<String>,
+}
+
+impl fmt::Display for GetPins {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        if self.hierarchical {
+            args.push_str(" -hierarchical");
+        }
+        if let Some(hsc) = &self.hsc {
+            args.push_str(&format!(" -hsc {}", hsc));
+        }
+        if self.regexp {
+            args.push_str(" -regexp");
+        }
+        if self.nocase {
+            args.push_str(" -nocase");
+        }
+        if let Some(of_objects) = &self.of_objects {
+            args.push_str(&format!(" -of_objects {}", of_objects));
+        }
+        if self.patterns.len() == 1 {
+            args.push_str(&format!(" {}", self.patterns[0]));
+        } else if self.patterns.len() > 1 {
+            args.push_str(" {");
+            for (i, s) in self.patterns.iter().enumerate() {
+                if i == 0 {
+                    args.push_str(&format!("{}", s));
+                } else {
+                    args.push_str(&format!(" {}", s));
+                }
+            }
+            args.push_str("}");
+        }
+        write!(f, "[get_pins{}]", args)
+    }
 }
 
 fn get_pins<I>() -> impl Parser<Input = I, Output = Object>
@@ -862,18 +1279,39 @@ where
 #[test]
 fn test_get_pins() {
     let mut parser = parser(object);
-    let tgt = "[get_pins {c1 c2}]";
+    let tgt = "[get_pins -hierarchical -hsc a -regexp -nocase -of_objects a a]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::GetPins(GetPins {
-            hierarchical: false,
-            hsc: None,
-            regexp: false,
-            nocase: false,
-            of_objects: None,
-            patterns: vec![String::from("c1"), String::from("c2")]
+            hierarchical: true,
+            hsc: Some(String::from("a")),
+            regexp: true,
+            nocase: true,
+            of_objects: Some(Box::new(Object::String(ObjectString {
+                strings: vec![String::from("a")]
+            }))),
+            patterns: vec![String::from("a")]
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
+
+    let tgt = "[get_pins -hierarchical -hsc a -regexp -nocase -of_objects a {a a}]";
+    let ret = parser.parse(tgt).unwrap().0;
+    assert_eq!(
+        Object::GetPins(GetPins {
+            hierarchical: true,
+            hsc: Some(String::from("a")),
+            regexp: true,
+            nocase: true,
+            of_objects: Some(Box::new(Object::String(ObjectString {
+                strings: vec![String::from("a")]
+            }))),
+            patterns: vec![String::from("a"), String::from("a")]
+        }),
+        ret
+    );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
@@ -884,6 +1322,32 @@ pub struct GetPorts {
     pub regexp: bool,
     pub nocase: bool,
     pub patterns: Vec<String>,
+}
+
+impl fmt::Display for GetPorts {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        if self.regexp {
+            args.push_str(" -regexp");
+        }
+        if self.nocase {
+            args.push_str(" -nocase");
+        }
+        if self.patterns.len() == 1 {
+            args.push_str(&format!(" {}", self.patterns[0]));
+        } else if self.patterns.len() > 1 {
+            args.push_str(" {");
+            for (i, s) in self.patterns.iter().enumerate() {
+                if i == 0 {
+                    args.push_str(&format!("{}", s));
+                } else {
+                    args.push_str(&format!(" {}", s));
+                }
+            }
+            args.push_str("}");
+        }
+        write!(f, "[get_ports{}]", args)
+    }
 }
 
 fn get_ports<I>() -> impl Parser<Input = I, Output = Object>
@@ -920,18 +1384,48 @@ where
 #[test]
 fn test_get_ports() {
     let mut parser = parser(object);
-    let tgt = "[get_ports {p1 p2}]";
+    let tgt = "[get_ports -regexp -nocase a]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Object::GetPorts(GetPorts {
-            regexp: false,
-            nocase: false,
-            patterns: vec![String::from("p1"), String::from("p2")]
+            regexp: true,
+            nocase: true,
+            patterns: vec![String::from("a")]
         }),
-        parser.parse(tgt).unwrap().0
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
+
+    let tgt = "[get_ports -regexp -nocase {a a}]";
+    let ret = parser.parse(tgt).unwrap().0;
+    assert_eq!(
+        Object::GetPorts(GetPorts {
+            regexp: true,
+            nocase: true,
+            patterns: vec![String::from("a"), String::from("a")]
+        }),
+        ret
+    );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
+
+/// A type containing information of `list`
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct List {
+    pub objects: Vec<Object>,
+}
+
+impl fmt::Display for List {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut args = String::from("");
+        for s in &self.objects {
+            args.push_str(&format!(" {}", s));
+        }
+        write!(f, "[list{}]", args)
+    }
+}
 
 fn list<I>() -> impl Parser<Input = I, Output = Object>
 where
@@ -939,31 +1433,69 @@ where
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("list");
-    brackets(command.with(many1(parser(object)))).map(|x| Object::List(x))
+    brackets(command.with(many1(parser(object)))).map(|x| Object::List(List { objects: x }))
 }
 
 #[test]
 fn test_list() {
     let mut parser = parser(object);
     let tgt = "[list [all_inputs] [all_outputs]]";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
-        Object::List(vec![
-            Object::AllInputs(AllInputs {
-                level_sensitive: false,
-                edge_triggered: false,
-                clock: None
-            }),
-            Object::AllOutputs(AllOutputs {
-                level_sensitive: false,
-                edge_triggered: false,
-                clock: None
-            }),
-        ]),
-        parser.parse(tgt).unwrap().0
+        Object::List(List {
+            objects: vec![
+                Object::AllInputs(AllInputs {
+                    level_sensitive: false,
+                    edge_triggered: false,
+                    clock: None
+                }),
+                Object::AllOutputs(AllOutputs {
+                    level_sensitive: false,
+                    edge_triggered: false,
+                    clock: None
+                }),
+            ]
+        }),
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
 }
 
 // -----------------------------------------------------------------------------
+
+/// A string type
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ObjectString {
+    pub strings: Vec<String>,
+}
+
+impl fmt::Display for ObjectString {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut ret = String::from("");
+        if self.strings.len() == 0 {
+        } else if self.strings.len() == 1 {
+            if self.strings[0].chars().any(|x| x.is_whitespace()) {
+                ret.push_str(&format!("\"{}\"", self.strings[0]))
+            } else {
+                ret.push_str(&self.strings[0])
+            }
+        } else {
+            ret.push_str("{");
+            for (i, s) in self.strings.iter().enumerate() {
+                if i != 0 {
+                    ret.push_str(" ");
+                }
+                if s.chars().any(|x| x.is_whitespace()) {
+                    ret.push_str(&format!("\"{}\"", s));
+                } else {
+                    ret.push_str(&format!("{}", s));
+                }
+            }
+            ret.push_str("}");
+        }
+        write!(f, "{}", ret)
+    }
+}
 
 fn string<I>() -> impl Parser<Input = I, Output = Object>
 where
@@ -971,8 +1503,8 @@ where
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     choice((
-        braces(parser(braces_strings).map(|x| Object::String(x))),
-        item().map(|x| Object::String(vec![x])),
+        braces(parser(braces_strings).map(|x| Object::String(ObjectString { strings: x }))),
+        item().map(|x| Object::String(ObjectString { strings: vec![x] })),
     ))
 }
 
@@ -980,18 +1512,32 @@ where
 fn test_string() {
     let mut parser = parser(object);
     let tgt = "a";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
-        Object::String(vec![String::from("a")]),
-        parser.parse(tgt).unwrap().0
+        Object::String(ObjectString {
+            strings: vec![String::from("a")]
+        }),
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
 
     let tgt = "{a b c}";
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
-        Object::String(vec![
-            String::from("a"),
-            String::from("b"),
-            String::from("c")
-        ]),
-        parser.parse(tgt).unwrap().0
+        Object::String(ObjectString {
+            strings: vec![String::from("a"), String::from("b"), String::from("c")]
+        }),
+        ret
     );
+    assert_eq!(tgt, format!("{}", ret));
+
+    let tgt = "\"a b c\"";
+    let ret = parser.parse(tgt).unwrap().0;
+    assert_eq!(
+        Object::String(ObjectString {
+            strings: vec![String::from("a b c")]
+        }),
+        ret
+    );
+    assert_eq!(tgt, format!("{}", ret));
 }
