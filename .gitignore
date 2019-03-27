@@ -1,7 +1,6 @@
 /target
 **/*.rs.bk
 Cargo.lock
-/testcase/pass/synopsys
-/testcase/pass/internal
-/testcase/fail/synopsys
+/testcase/synopsys
+/testcase/internal
 /org
