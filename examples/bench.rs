@@ -12,7 +12,7 @@ fn main() {
             let _ = f.read_to_string(&mut buf);
 
             let mut parser = sdc_parser();
-            let ret = parser.parse(buf.as_str());
+            let ret = parser.easy_parse(buf.as_str());
 
             let _ = dbg!(ret.is_ok());
         }

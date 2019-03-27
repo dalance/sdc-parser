@@ -6,7 +6,7 @@ use combine::{attempt, choice, many, many1, parser, Stream};
 // -----------------------------------------------------------------------------
 
 /// Object
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Object {
     AllClocks,
     AllInputs(AllInputs),
@@ -102,7 +102,7 @@ fn test_all_clocks() {
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `all_inputs`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct AllInputs {
     pub level_sensitive: bool,
     pub edge_triggered: bool,
@@ -162,7 +162,7 @@ fn test_all_inputs() {
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `all_outputs`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct AllOutputs {
     pub level_sensitive: bool,
     pub edge_triggered: bool,
@@ -222,7 +222,7 @@ fn test_all_outputs() {
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `all_registers`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct AllRegisters {
     pub no_hierarchy: bool,
     pub hsc: Option<String>,
@@ -381,7 +381,7 @@ fn test_current_design() {
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `get_cells`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GetCells {
     pub hierarchical: bool,
     pub hsc: Option<String>,
@@ -485,7 +485,7 @@ fn test_get_cells() {
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `get_clocks`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GetClocks {
     pub regexp: bool,
     pub nocase: bool,
@@ -552,7 +552,7 @@ fn test_get_clocks() {
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `get_lib_cells`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GetLibCells {
     pub hsc: Option<String>,
     pub regexp: bool,
@@ -615,7 +615,7 @@ fn test_get_lib_cells() {
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `get_lib_pins`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GetLibPins {
     pub regexp: bool,
     pub nocase: bool,
@@ -672,7 +672,7 @@ fn test_get_lib_pins() {
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `get_libs`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GetLibs {
     pub regexp: bool,
     pub nocase: bool,
@@ -729,7 +729,7 @@ fn test_get_libs() {
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `get_nets`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GetNets {
     pub hierarchical: bool,
     pub hsc: Option<String>,
@@ -814,7 +814,7 @@ fn test_get_nets() {
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `get_pins`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GetPins {
     pub hierarchical: bool,
     pub hsc: Option<String>,
@@ -899,7 +899,7 @@ fn test_get_pins() {
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `get_ports`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GetPorts {
     pub regexp: bool,
     pub nocase: bool,

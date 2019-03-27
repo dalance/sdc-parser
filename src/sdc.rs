@@ -1,6 +1,7 @@
 use crate::object::*;
 use crate::util::*;
 use combine::char::{char, space, string};
+use combine::easy::{Error, Info};
 use combine::error::{ParseError, ParseResult};
 use combine::parser::Parser;
 use combine::{attempt, choice, look_ahead, many, many1, none_of, optional, parser, token, Stream};
@@ -8,7 +9,7 @@ use combine::{attempt, choice, look_ahead, many, many1, none_of, optional, parse
 // -----------------------------------------------------------------------------
 
 /// A type representing sdc
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Sdc {
     pub commands: Vec<Command>,
 }
@@ -16,7 +17,7 @@ pub struct Sdc {
 // -----------------------------------------------------------------------------
 
 /// Enumeration on sdc command
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     LineBreak,
     Comment(String),
@@ -30,6 +31,7 @@ pub enum Command {
     SetClockGatingCheck(SetClockGatingCheck),
     SetClockGroups(SetClockGroups),
     SetClockLatency(SetClockLatency),
+    SetClockSense(SetClockSense),
     SetClockTransition(SetClockTransition),
     SetClockUncertainty(SetClockUncertainty),
     SetDataCheck(SetDataCheck),
@@ -76,6 +78,7 @@ pub enum Command {
     SetWireLoadMode(SetWireLoadMode),
     SetWireLoadModel(SetWireLoadModel),
     SetWireLoadSelectionGroup(SetWireLoadSelectionGroup),
+    Unknown(String),
     Whitespace,
 }
 
@@ -195,7 +198,8 @@ enum CommandArg {
 pub(crate) fn sdc<I>(input: &mut I) -> ParseResult<Sdc, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     many1(parser(command))
         .map(|x| Sdc { commands: x })
@@ -205,7 +209,8 @@ where
 fn command<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let c = (
         attempt(parser(create_clock)),
@@ -220,6 +225,7 @@ where
         attempt(parser(set_clock_gating_check)),
         attempt(parser(set_clock_groups)),
         attempt(parser(set_clock_latency)),
+        attempt(parser(set_clock_sense)),
         attempt(parser(set_clock_transition)),
         attempt(parser(set_clock_uncertainty)),
     );
@@ -296,8 +302,8 @@ where
         look_ahead(char('\n')).with(parser(linebreak)),
         look_ahead(string("\r\n")).with(parser(linebreak)),
         look_ahead(char('#')).with(parser(comment)),
-        look_ahead(char('c')).with(choice(c)),
-        look_ahead(char('g')).with(choice(g)),
+        attempt(look_ahead(char('c')).with(choice(c))),
+        attempt(look_ahead(char('g')).with(choice(g))),
         attempt(look_ahead(string("set ")).with(choice(set))),
         attempt(look_ahead(string("set_ca")).with(choice(set_ca))),
         attempt(look_ahead(string("set_cl")).with(choice(set_cl))),
@@ -313,7 +319,8 @@ where
         attempt(look_ahead(string("set_o")).with(choice(set_o))),
         attempt(look_ahead(string("set_p")).with(choice(set_p))),
         attempt(look_ahead(string("set_w")).with(choice(set_w))),
-        choice(set__),
+        attempt(choice(set__)),
+        parser(unknown),
     ))
     .parse_stream(input)
 }
@@ -323,7 +330,8 @@ where
 fn whitespace<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let mut command = lex(space()).map(|_| Command::Whitespace);
     command.parse_stream(input)
@@ -334,7 +342,8 @@ where
 fn linebreak<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let mut command = lex(string("\n").or(string("\r\n"))).map(|_| Command::LineBreak);
     command.parse_stream(input)
@@ -345,7 +354,8 @@ where
 fn comment<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let mut command = token('#')
         .and(many(none_of("\n".chars())))
@@ -355,8 +365,20 @@ where
 
 // -----------------------------------------------------------------------------
 
+fn unknown<I>(input: &mut I) -> ParseResult<Command, I>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+{
+    let mut command = many1(none_of("\n".chars())).map(|x| Command::Unknown(x));
+    command.parse_stream(input)
+}
+
+// -----------------------------------------------------------------------------
+
 /// A type containing information of `current_instance`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CurrentInstance {
     pub instance: Option<String>,
 }
@@ -364,14 +386,15 @@ pub struct CurrentInstance {
 fn current_instance<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("current_instance");
     let instance = item().map(|x| CommandArg::String(x));
     let args = (attempt(instance),);
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut instance = None;
             for x in xs {
                 match x {
@@ -379,7 +402,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            Command::CurrentInstance(CurrentInstance { instance })
+            Ok(Command::CurrentInstance(CurrentInstance { instance }))
         })
         .parse_stream(input)
 }
@@ -392,7 +415,7 @@ fn test_current_instance() {
         Command::CurrentInstance(CurrentInstance {
             instance: Some(String::from("dut")),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
@@ -401,7 +424,8 @@ fn test_current_instance() {
 fn set_sdc_version<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set").with(symbol("sdc_version"));
     let version = float().map(|x| Command::SetSdcVersion(x));
@@ -412,13 +436,16 @@ where
 fn test_set_sdc_version() {
     let mut parser = parser(command);
     let tgt = "set sdc_version 2.1";
-    assert_eq!(Command::SetSdcVersion(2.1), parser.parse(tgt).unwrap().0);
+    assert_eq!(
+        Command::SetSdcVersion(2.1),
+        parser.easy_parse(tgt).unwrap().0
+    );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Set {
     pub variable_name: String,
     pub value: Object,
@@ -427,7 +454,8 @@ pub struct Set {
 fn set<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let mut command = symbol("set")
         .with(item())
@@ -450,14 +478,14 @@ fn test_set() {
             variable_name: String::from("a"),
             value: Object::String(vec![String::from("b")])
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_units`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetUnits {
     pub capacitance: Option<UnitValue>,
     pub resistance: Option<UnitValue>,
@@ -468,7 +496,7 @@ pub struct SetUnits {
 }
 
 /// UnitValue
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct UnitValue {
     pub unit: String,
     pub value: f64,
@@ -477,7 +505,8 @@ pub struct UnitValue {
 fn unit_value<I>(input: &mut I) -> ParseResult<UnitValue, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let mut unit_value = optional(float()).and(item()).map(|(x, y)| match x {
         Some(x) => UnitValue { value: x, unit: y },
@@ -492,7 +521,8 @@ where
 fn set_units<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = attempt(symbol("set_units")).or(symbol("set_unit"));
     let capacitance = symbol("-capacitance")
@@ -523,7 +553,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut capacitance = None;
             let mut resistance = None;
             let mut time = None;
@@ -541,14 +571,14 @@ where
                     _ => unreachable!(),
                 }
             }
-            Command::SetUnits(SetUnits {
+            Ok(Command::SetUnits(SetUnits {
                 capacitance,
                 resistance,
                 time,
                 voltage,
                 current,
                 power,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -585,14 +615,14 @@ fn test_set_units() {
                 unit: String::from("mW")
             }),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `create_clock`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CreateClock {
     pub period: f64,
     pub name: Option<String>,
@@ -605,7 +635,8 @@ pub struct CreateClock {
 fn create_clock<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("create_clock");
     let period = symbol("-period")
@@ -630,7 +661,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut period = None;
             let mut name = None;
             let mut waveform = vec![];
@@ -648,15 +679,15 @@ where
                     _ => unreachable!(),
                 }
             }
-            let period = period.expect("create_clock:period");
-            Command::CreateClock(CreateClock {
+            let period = period.ok_or(Error::Expected(Info::Borrowed("create_clock:period")))?;
+            Ok(Command::CreateClock(CreateClock {
                 period,
                 name,
                 waveform,
                 add,
                 comment,
                 source_objects,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -674,14 +705,14 @@ fn test_create_clock() {
             comment: Some(String::from("aaa")),
             source_objects: Some(Object::String(vec![String::from("source")])),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `create_generated_clock`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CreateGeneratedClock {
     pub name: Option<String>,
     pub source: Object,
@@ -701,7 +732,8 @@ pub struct CreateGeneratedClock {
 fn create_generated_clock<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("create_generated_clock");
     let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
@@ -750,7 +782,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut name = None;
             let mut source = None;
             let mut edges = vec![];
@@ -782,9 +814,13 @@ where
                     _ => unreachable!(),
                 }
             }
-            let source = source.expect("create_generated_clock:source");
-            let source_objects = source_objects.expect("create_generated_clock:source_objects");
-            Command::CreateGeneratedClock(CreateGeneratedClock {
+            let source = source.ok_or(Error::Expected(Info::Borrowed(
+                "create_generated_clock:source",
+            )))?;
+            let source_objects = source_objects.ok_or(Error::Expected(Info::Borrowed(
+                "create_generated_clock:source_objects",
+            )))?;
+            Ok(Command::CreateGeneratedClock(CreateGeneratedClock {
                 name,
                 source,
                 edges,
@@ -798,7 +834,7 @@ where
                 combinational,
                 comment,
                 source_objects,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -823,14 +859,14 @@ fn test_create_generated_clock() {
             comment: Some(String::from("aaa")),
             source_objects: Object::String(vec![String::from("clk")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `group_path`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GroupPath {
     pub name: Option<String>,
     pub default: bool,
@@ -850,7 +886,8 @@ pub struct GroupPath {
 fn group_path<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("group_path");
     let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
@@ -905,7 +942,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut name = None;
             let mut default = false;
             let mut weight = None;
@@ -937,7 +974,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            Command::GroupPath(GroupPath {
+            Ok(Command::GroupPath(GroupPath {
                 name,
                 default,
                 weight,
@@ -951,7 +988,7 @@ where
                 rise_through,
                 fall_through,
                 comment,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -976,14 +1013,14 @@ fn test_group_path() {
             fall_through: Some(Object::String(vec![String::from("c")])),
             comment: Some(String::from("aaa")),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_clock_gating_check`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetClockGatingCheck {
     pub setup: Option<f64>,
     pub hold: Option<f64>,
@@ -997,7 +1034,8 @@ pub struct SetClockGatingCheck {
 fn set_clock_gating_check<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_clock_gating_check");
     let setup = symbol("-setup")
@@ -1022,7 +1060,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut setup = None;
             let mut hold = None;
             let mut rise = false;
@@ -1042,7 +1080,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            Command::SetClockGatingCheck(SetClockGatingCheck {
+            Ok(Command::SetClockGatingCheck(SetClockGatingCheck {
                 setup,
                 hold,
                 rise,
@@ -1050,7 +1088,7 @@ where
                 high,
                 low,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -1069,14 +1107,14 @@ fn test_set_clock_gating_check() {
             low: true,
             object_list: Some(Object::String(vec![String::from("a")])),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_clock_groups`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetClockGroups {
     pub group: Object,
     pub logically_exclusive: bool,
@@ -1090,7 +1128,8 @@ pub struct SetClockGroups {
 fn set_clock_groups<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = attempt(symbol("set_clock_groups")).or(symbol("set_clock_groups"));
     let group = symbol("-group")
@@ -1117,7 +1156,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut group = None;
             let mut logically_exclusive = false;
             let mut physically_exclusive = false;
@@ -1137,8 +1176,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let group = group.expect("set_clock_groups:group");
-            Command::SetClockGroups(SetClockGroups {
+            let group = group.ok_or(Error::Expected(Info::Borrowed("set_clock_groups:group")))?;
+            Ok(Command::SetClockGroups(SetClockGroups {
                 group,
                 logically_exclusive,
                 physically_exclusive,
@@ -1146,7 +1185,7 @@ where
                 allow_paths,
                 name,
                 comment,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -1165,14 +1204,14 @@ fn test_set_clock_groups() {
             name: Some(String::from("clk")),
             comment: Some(String::from("aaa")),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_clock_latency`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetClockLatency {
     pub rise: bool,
     pub fall: bool,
@@ -1190,7 +1229,8 @@ pub struct SetClockLatency {
 fn set_clock_latency<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_clock_latency");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -1221,7 +1261,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -1249,9 +1289,11 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay = delay.expect("set_clock_latency:delay");
-            let object_list = object_list.expect("set_clock_latency:object_list");
-            Command::SetClockLatency(SetClockLatency {
+            let delay = delay.ok_or(Error::Expected(Info::Borrowed("set_clock_latency:delay")))?;
+            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_clock_latency:object_list",
+            )))?;
+            Ok(Command::SetClockLatency(SetClockLatency {
                 rise,
                 fall,
                 min,
@@ -1263,7 +1305,7 @@ where
                 clock,
                 delay,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -1287,14 +1329,102 @@ fn test_set_clock_latency() {
             delay: 0.12,
             object_list: Object::String(vec![String::from("obj")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
+    );
+}
+
+// -----------------------------------------------------------------------------
+
+/// A type containing information of `set_clock_sense`
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SetClockSense {
+    pub positive: bool,
+    pub negative: bool,
+    pub stop_propagation: bool,
+    pub pulse: Option<String>,
+    pub clocks: Option<Object>,
+    pub pin_list: Object,
+}
+
+fn set_clock_sense<I>(input: &mut I) -> ParseResult<Command, I>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+{
+    let command = symbol("set_clock_sense");
+    let positive = symbol("-positive").map(|_| CommandArg::Positive);
+    let negative = symbol("-negative").map(|_| CommandArg::Negative);
+    let stop_propagation = symbol("-stop_propagation").map(|_| CommandArg::StopPropagation);
+    let pulse = symbol("-pulse").with(item()).map(|x| CommandArg::Pulse(x));
+    let clocks = symbol("-clocks")
+        .with(parser(object))
+        .map(|x| CommandArg::Clocks(x));
+    let pin_list = parser(object).map(|x| CommandArg::Object(x));
+    let args = (
+        attempt(positive),
+        attempt(negative),
+        attempt(stop_propagation),
+        attempt(pulse),
+        attempt(clocks),
+        attempt(pin_list),
+    );
+    command
+        .with(many(choice(args)))
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+            let mut positive = false;
+            let mut negative = false;
+            let mut stop_propagation = false;
+            let mut pulse = None;
+            let mut clocks = None;
+            let mut pin_list = None;
+            for x in xs {
+                match x {
+                    CommandArg::Positive => positive = true,
+                    CommandArg::Negative => negative = true,
+                    CommandArg::StopPropagation => stop_propagation = true,
+                    CommandArg::Pulse(x) => pulse = Some(x),
+                    CommandArg::Clocks(x) => clocks = Some(x),
+                    CommandArg::Object(x) => pin_list = Some(x),
+                    _ => unreachable!(),
+                }
+            }
+            let pin_list = pin_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_clock_sense:pin_list is required",
+            )))?;
+            Ok(Command::SetClockSense(SetClockSense {
+                positive,
+                negative,
+                stop_propagation,
+                pulse,
+                clocks,
+                pin_list,
+            }))
+        })
+        .parse_stream(input)
+}
+
+#[test]
+fn test_set_clock_sense() {
+    let mut parser = parser(command);
+    let tgt = "set_clock_sense -positive -negative -stop_propagation -pulse a -clocks clk pin";
+    assert_eq!(
+        Command::SetClockSense(SetClockSense {
+            positive: true,
+            negative: true,
+            stop_propagation: true,
+            pulse: Some(String::from("a")),
+            clocks: Some(Object::String(vec![String::from("clk")])),
+            pin_list: Object::String(vec![String::from("pin")]),
+        }),
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_sense`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetSense {
     pub r#type: Option<String>,
     pub non_unate: bool,
@@ -1310,7 +1440,8 @@ pub struct SetSense {
 fn set_sense<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_sense");
     let r#type = symbol("-type").with(item()).map(|x| CommandArg::Type(x));
@@ -1337,7 +1468,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut r#type = None;
             let mut non_unate = false;
             let mut positive = false;
@@ -1361,8 +1492,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let pin_list = pin_list.expect("set_sense:pin_list");
-            Command::SetSense(SetSense {
+            let pin_list = pin_list.ok_or(Error::Expected(Info::Borrowed("set_sense:pin_list")))?;
+            Ok(Command::SetSense(SetSense {
                 r#type,
                 non_unate,
                 positive,
@@ -1372,7 +1503,7 @@ where
                 pulse,
                 clocks,
                 pin_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -1394,14 +1525,14 @@ fn test_set_sense() {
             clocks: Some(Object::String(vec![String::from("clk")])),
             pin_list: Object::String(vec![String::from("pin")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_clock_transition`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetClockTransition {
     pub rise: bool,
     pub fall: bool,
@@ -1414,7 +1545,8 @@ pub struct SetClockTransition {
 fn set_clock_transition<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_clock_transition");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -1433,7 +1565,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -1451,16 +1583,20 @@ where
                     _ => unreachable!(),
                 }
             }
-            let transition = transition.expect("set_clock_transition:transition");
-            let clock_list = clock_list.expect("set_clock_transition:clock_list");
-            Command::SetClockTransition(SetClockTransition {
+            let transition = transition.ok_or(Error::Expected(Info::Borrowed(
+                "set_clock_transition:transition",
+            )))?;
+            let clock_list = clock_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_clock_transition:clock_list",
+            )))?;
+            Ok(Command::SetClockTransition(SetClockTransition {
                 rise,
                 fall,
                 min,
                 max,
                 transition,
                 clock_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -1478,14 +1614,14 @@ fn test_set_clock_transition() {
             transition: 12e-3,
             clock_list: Object::String(vec![String::from("clk")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_clock_uncertainty`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetClockUncertainty {
     pub from: Option<Object>,
     pub rise_from: Option<Object>,
@@ -1504,7 +1640,8 @@ pub struct SetClockUncertainty {
 fn set_clock_uncertainty<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_clock_uncertainty");
     let from = symbol("-from")
@@ -1547,7 +1684,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut from = None;
             let mut rise_from = None;
             let mut fall_from = None;
@@ -1577,8 +1714,10 @@ where
                     _ => unreachable!(),
                 }
             }
-            let uncertainty = uncertainty.expect("set_clock_uncertainty:uncertainty");
-            Command::SetClockUncertainty(SetClockUncertainty {
+            let uncertainty = uncertainty.ok_or(Error::Expected(Info::Borrowed(
+                "set_clock_uncertainty:uncertainty",
+            )))?;
+            Ok(Command::SetClockUncertainty(SetClockUncertainty {
                 from,
                 rise_from,
                 fall_from,
@@ -1591,7 +1730,7 @@ where
                 hold,
                 uncertainty,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -1615,14 +1754,14 @@ fn test_set_clock_uncertainty() {
             uncertainty: 0.1,
             object_list: Some(Object::String(vec![String::from("a")])),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_data_check`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetDataCheck {
     pub from: Option<Object>,
     pub to: Option<Object>,
@@ -1639,7 +1778,8 @@ pub struct SetDataCheck {
 fn set_data_check<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_data_check");
     let from = symbol("-from")
@@ -1680,7 +1820,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut from = None;
             let mut to = None;
             let mut rise_from = None;
@@ -1706,8 +1846,8 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.expect("set_data_check:value");
-            Command::SetDataCheck(SetDataCheck {
+            let value = value.ok_or(Error::Expected(Info::Borrowed("set_data_check:value")))?;
+            Ok(Command::SetDataCheck(SetDataCheck {
                 from,
                 to,
                 rise_from,
@@ -1718,7 +1858,7 @@ where
                 hold,
                 clock,
                 value,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -1740,14 +1880,14 @@ fn test_set_data_check() {
             clock: Some(Object::String(vec![String::from("a")])),
             value: 0.1,
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_disable_timing`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetDisableTiming {
     pub from: Option<Object>,
     pub to: Option<Object>,
@@ -1757,7 +1897,8 @@ pub struct SetDisableTiming {
 fn set_disable_timing<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_disable_timing");
     let from = symbol("-from")
@@ -1770,7 +1911,7 @@ where
     let args = (attempt(from), attempt(to), attempt(cell_pin_list));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut from = None;
             let mut to = None;
             let mut cell_pin_list = None;
@@ -1782,12 +1923,14 @@ where
                     _ => unreachable!(),
                 }
             }
-            let cell_pin_list = cell_pin_list.expect("set_disable_timing:cell_pin_list");
-            Command::SetDisableTiming(SetDisableTiming {
+            let cell_pin_list = cell_pin_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_disable_timing:cell_pin_list",
+            )))?;
+            Ok(Command::SetDisableTiming(SetDisableTiming {
                 from,
                 to,
                 cell_pin_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -1802,14 +1945,14 @@ fn test_set_disable_timing() {
             to: Some(Object::String(vec![String::from("a")])),
             cell_pin_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_false_path`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetFalsePath {
     pub setup: bool,
     pub hold: bool,
@@ -1830,7 +1973,8 @@ pub struct SetFalsePath {
 fn set_false_path<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_false_path");
     let setup = symbol("-setup").map(|_| CommandArg::Setup);
@@ -1885,7 +2029,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut setup = false;
             let mut hold = false;
             let mut rise = false;
@@ -1919,7 +2063,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            Command::SetFalsePath(SetFalsePath {
+            Ok(Command::SetFalsePath(SetFalsePath {
                 setup,
                 hold,
                 rise,
@@ -1934,7 +2078,7 @@ where
                 fall_to,
                 fall_through,
                 comment,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -1960,14 +2104,14 @@ fn test_set_false_path() {
             fall_through: Some(Object::String(vec![String::from("a")])),
             comment: Some(String::from("aaa")),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_ideal_latency`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetIdealLatency {
     pub rise: bool,
     pub fall: bool,
@@ -1980,7 +2124,8 @@ pub struct SetIdealLatency {
 fn set_ideal_latency<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_ideal_latency");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -1999,7 +2144,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -2017,16 +2162,18 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay = delay.expect("set_ideal_latency:delay");
-            let object_list = object_list.expect("set_ideal_latency:object_list");
-            Command::SetIdealLatency(SetIdealLatency {
+            let delay = delay.ok_or(Error::Expected(Info::Borrowed("set_ideal_latency:delay")))?;
+            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_ideal_latency:object_list",
+            )))?;
+            Ok(Command::SetIdealLatency(SetIdealLatency {
                 rise,
                 fall,
                 min,
                 max,
                 delay,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -2044,14 +2191,14 @@ fn test_set_ideal_latency() {
             delay: 0.1,
             object_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_ideal_network`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetIdealNetwork {
     pub no_propagate: bool,
     pub object_list: Object,
@@ -2060,7 +2207,8 @@ pub struct SetIdealNetwork {
 fn set_ideal_network<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_ideal_network");
     let no_propagate = symbol("-no_propagate").map(|_| CommandArg::NoPropagate);
@@ -2068,7 +2216,7 @@ where
     let args = (attempt(no_propagate), attempt(object_list));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut no_propagate = false;
             let mut object_list = None;
             for x in xs {
@@ -2078,11 +2226,13 @@ where
                     _ => unreachable!(),
                 }
             }
-            let object_list = object_list.expect("set_ideal_network:object_list");
-            Command::SetIdealNetwork(SetIdealNetwork {
+            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_ideal_network:object_list",
+            )))?;
+            Ok(Command::SetIdealNetwork(SetIdealNetwork {
                 no_propagate,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -2096,14 +2246,14 @@ fn test_set_ideal_network() {
             no_propagate: true,
             object_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_ideal_transition`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetIdealTransition {
     pub rise: bool,
     pub fall: bool,
@@ -2116,7 +2266,8 @@ pub struct SetIdealTransition {
 fn set_ideal_transition<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_ideal_transition");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -2135,7 +2286,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -2153,16 +2304,20 @@ where
                     _ => unreachable!(),
                 }
             }
-            let transition_time = transition_time.expect("set_ideal_transition:transition_time");
-            let object_list = object_list.expect("set_ideal_transition:object_list");
-            Command::SetIdealTransition(SetIdealTransition {
+            let transition_time = transition_time.ok_or(Error::Expected(Info::Borrowed(
+                "set_ideal_transition:transition_time",
+            )))?;
+            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_ideal_transition:object_list",
+            )))?;
+            Ok(Command::SetIdealTransition(SetIdealTransition {
                 rise,
                 fall,
                 min,
                 max,
                 transition_time,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -2180,14 +2335,14 @@ fn test_set_ideal_transition() {
             transition_time: 0.1,
             object_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_input_delay`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetInputDelay {
     pub clock: Option<Object>,
     pub reference_pin: Option<Object>,
@@ -2207,7 +2362,8 @@ pub struct SetInputDelay {
 fn set_input_delay<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_input_delay");
     let clock = symbol("-clock")
@@ -2246,7 +2402,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut clock = None;
             let mut reference_pin = None;
             let mut clock_fall = false;
@@ -2278,9 +2434,13 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.expect("set_input_delay:delay_value");
-            let port_pin_list = port_pin_list.expect("set_input_delay:port_pin_list");
-            Command::SetInputDelay(SetInputDelay {
+            let delay_value = delay_value.ok_or(Error::Expected(Info::Borrowed(
+                "set_input_delay:delay_value",
+            )))?;
+            let port_pin_list = port_pin_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_input_delay:port_pin_list",
+            )))?;
+            Ok(Command::SetInputDelay(SetInputDelay {
                 clock,
                 reference_pin,
                 clock_fall,
@@ -2294,7 +2454,7 @@ where
                 source_latency_included,
                 delay_value,
                 port_pin_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -2319,14 +2479,14 @@ fn test_set_input_delay() {
             delay_value: 0.1,
             port_pin_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_max_delay`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMaxDelay {
     pub rise: bool,
     pub fall: bool,
@@ -2347,7 +2507,8 @@ pub struct SetMaxDelay {
 fn set_max_delay<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_max_delay");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -2403,7 +2564,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut from = None;
@@ -2437,8 +2598,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.expect("set_max_delay:delay_value");
-            Command::SetMaxDelay(SetMaxDelay {
+            let delay_value =
+                delay_value.ok_or(Error::Expected(Info::Borrowed("set_max_delay:delay_value")))?;
+            Ok(Command::SetMaxDelay(SetMaxDelay {
                 rise,
                 fall,
                 from,
@@ -2453,7 +2615,7 @@ where
                 ignore_clock_latency,
                 comment,
                 delay_value,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -2479,14 +2641,14 @@ fn test_set_max_delay() {
             comment: Some(String::from("aaa")),
             delay_value: 0.1,
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_max_time_borrow`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMaxTimeBorrow {
     pub delay_value: f64,
     pub object_list: Object,
@@ -2495,7 +2657,8 @@ pub struct SetMaxTimeBorrow {
 fn set_max_time_borrow<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_max_time_borrow");
     let delay_value = float().map(|x| CommandArg::Value(x));
@@ -2503,7 +2666,7 @@ where
     let args = (attempt(delay_value), attempt(object_list));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut delay_value = None;
             let mut object_list = None;
             for x in xs {
@@ -2513,12 +2676,16 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.expect("set_max_time_borrow:delay_value");
-            let object_list = object_list.expect("set_max_time_borrow:object_list");
-            Command::SetMaxTimeBorrow(SetMaxTimeBorrow {
+            let delay_value = delay_value.ok_or(Error::Expected(Info::Borrowed(
+                "set_max_time_borrow:delay_value",
+            )))?;
+            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_max_time_borrow:object_list",
+            )))?;
+            Ok(Command::SetMaxTimeBorrow(SetMaxTimeBorrow {
                 delay_value,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -2532,14 +2699,14 @@ fn test_set_max_time_borrow() {
             delay_value: 0.1,
             object_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_min_delay`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMinDelay {
     pub rise: bool,
     pub fall: bool,
@@ -2560,7 +2727,8 @@ pub struct SetMinDelay {
 fn set_min_delay<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_min_delay");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -2616,7 +2784,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut from = None;
@@ -2650,8 +2818,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.expect("set_min_delay:delay_value");
-            Command::SetMinDelay(SetMinDelay {
+            let delay_value =
+                delay_value.ok_or(Error::Expected(Info::Borrowed("set_min_delay:delay_value")))?;
+            Ok(Command::SetMinDelay(SetMinDelay {
                 rise,
                 fall,
                 from,
@@ -2666,7 +2835,7 @@ where
                 ignore_clock_latency,
                 comment,
                 delay_value,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -2692,14 +2861,14 @@ fn test_set_min_delay() {
             comment: Some(String::from("aaa")),
             delay_value: 0.1,
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_min_pulse_width`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMinPulseWidth {
     pub low: bool,
     pub high: bool,
@@ -2710,7 +2879,8 @@ pub struct SetMinPulseWidth {
 fn set_min_pulse_width<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_min_pulse_width");
     let low = symbol("-low").map(|_| CommandArg::Low);
@@ -2725,7 +2895,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut low = false;
             let mut high = false;
             let mut value = None;
@@ -2739,13 +2909,14 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.expect("set_min_pulse_width:value");
-            Command::SetMinPulseWidth(SetMinPulseWidth {
+            let value =
+                value.ok_or(Error::Expected(Info::Borrowed("set_min_pulse_width:value")))?;
+            Ok(Command::SetMinPulseWidth(SetMinPulseWidth {
                 low,
                 high,
                 value,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -2761,14 +2932,14 @@ fn test_set_min_pulse_width() {
             value: 0.1,
             object_list: Some(Object::String(vec![String::from("a")])),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_multicycle_path`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMulticyclePath {
     pub setup: bool,
     pub hold: bool,
@@ -2792,7 +2963,8 @@ pub struct SetMulticyclePath {
 fn set_multicycle_path<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_multicycle_path");
     let setup = symbol("-setup").map(|_| CommandArg::Setup);
@@ -2853,7 +3025,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut setup = false;
             let mut hold = false;
             let mut rise = false;
@@ -2893,8 +3065,10 @@ where
                     _ => unreachable!(),
                 }
             }
-            let path_multiplier = path_multiplier.expect("set_multicycle_path:path_multiplier");
-            Command::SetMulticyclePath(SetMulticyclePath {
+            let path_multiplier = path_multiplier.ok_or(Error::Expected(Info::Borrowed(
+                "set_multicycle_path:path_multiplier",
+            )))?;
+            Ok(Command::SetMulticyclePath(SetMulticyclePath {
                 setup,
                 hold,
                 rise,
@@ -2912,7 +3086,7 @@ where
                 fall_through,
                 comment,
                 path_multiplier,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -2941,14 +3115,14 @@ fn test_set_multicycle_path() {
             comment: Some(String::from("aaa")),
             path_multiplier: 0.1,
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_output_delay`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetOutputDelay {
     pub clock: Option<Object>,
     pub reference_pin: Option<Object>,
@@ -2968,7 +3142,8 @@ pub struct SetOutputDelay {
 fn set_output_delay<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_output_delay");
     let clock = symbol("-clock")
@@ -3007,7 +3182,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut clock = None;
             let mut reference_pin = None;
             let mut clock_fall = false;
@@ -3039,9 +3214,13 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.expect("set_output_delay:delay_value");
-            let port_pin_list = port_pin_list.expect("set_output_delay:port_pin_list");
-            Command::SetOutputDelay(SetOutputDelay {
+            let delay_value = delay_value.ok_or(Error::Expected(Info::Borrowed(
+                "set_output_delay:delay_value",
+            )))?;
+            let port_pin_list = port_pin_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_output_delay:port_pin_list",
+            )))?;
+            Ok(Command::SetOutputDelay(SetOutputDelay {
                 clock,
                 reference_pin,
                 clock_fall,
@@ -3055,7 +3234,7 @@ where
                 source_latency_included,
                 delay_value,
                 port_pin_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -3080,14 +3259,14 @@ fn test_set_output_delay() {
             delay_value: 0.1,
             port_pin_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_propagated_clock`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetPropagatedClock {
     pub object_list: Object,
 }
@@ -3095,14 +3274,15 @@ pub struct SetPropagatedClock {
 fn set_propagated_clock<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_propagated_clock");
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(object_list),);
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut object_list = None;
             for x in xs {
                 match x {
@@ -3110,8 +3290,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let object_list = object_list.expect("set_propagated_clock:object_list");
-            Command::SetPropagatedClock(SetPropagatedClock { object_list })
+            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_propagated_clock:object_list",
+            )))?;
+            Ok(Command::SetPropagatedClock(SetPropagatedClock {
+                object_list,
+            }))
         })
         .parse_stream(input)
 }
@@ -3124,20 +3308,20 @@ fn test_set_propagated_clock() {
         Command::SetPropagatedClock(SetPropagatedClock {
             object_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_case_analysis`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetCaseAnalysis {
     pub value: CaseValue,
     pub port_or_pin_list: Object,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CaseValue {
     Zero,
     One,
@@ -3154,7 +3338,8 @@ impl Default for CaseValue {
 fn set_case_analysis<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_case_analysis");
     let value = choice((
@@ -3174,7 +3359,7 @@ where
     let args = (attempt(value), attempt(port_or_pin_list));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut port_or_pin_list = None;
             for x in xs {
@@ -3184,12 +3369,14 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.expect("set_case_analysis:value");
-            let port_or_pin_list = port_or_pin_list.expect("set_case_analysis:port_or_pin_list");
-            Command::SetCaseAnalysis(SetCaseAnalysis {
+            let value = value.ok_or(Error::Expected(Info::Borrowed("set_case_analysis:value")))?;
+            let port_or_pin_list = port_or_pin_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_case_analysis:port_or_pin_list",
+            )))?;
+            Ok(Command::SetCaseAnalysis(SetCaseAnalysis {
                 value,
                 port_or_pin_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -3203,7 +3390,7 @@ fn test_set_case_analysis() {
             value: CaseValue::Zero,
             port_or_pin_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
     let tgt = "set_case_analysis 1 a";
     assert_eq!(
@@ -3211,7 +3398,7 @@ fn test_set_case_analysis() {
             value: CaseValue::One,
             port_or_pin_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
     let tgt = "set_case_analysis rising a";
     assert_eq!(
@@ -3219,7 +3406,7 @@ fn test_set_case_analysis() {
             value: CaseValue::Rising,
             port_or_pin_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
     let tgt = "set_case_analysis falling a";
     assert_eq!(
@@ -3227,14 +3414,14 @@ fn test_set_case_analysis() {
             value: CaseValue::Falling,
             port_or_pin_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_drive`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetDrive {
     pub rise: bool,
     pub fall: bool,
@@ -3247,7 +3434,8 @@ pub struct SetDrive {
 fn set_drive<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_drive");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -3266,7 +3454,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -3284,16 +3472,18 @@ where
                     _ => unreachable!(),
                 }
             }
-            let resistance = resistance.expect("set_drive:resistance");
-            let port_list = port_list.expect("set_drive:port_list");
-            Command::SetDrive(SetDrive {
+            let resistance =
+                resistance.ok_or(Error::Expected(Info::Borrowed("set_drive:resistance")))?;
+            let port_list =
+                port_list.ok_or(Error::Expected(Info::Borrowed("set_drive:port_list")))?;
+            Ok(Command::SetDrive(SetDrive {
                 rise,
                 fall,
                 min,
                 max,
                 resistance,
                 port_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -3311,14 +3501,14 @@ fn test_set_drive() {
             resistance: 0.1,
             port_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_driving_cell`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetDrivingCell {
     pub lib_cell: Option<Object>,
     pub rise: bool,
@@ -3341,7 +3531,8 @@ pub struct SetDrivingCell {
 fn set_driving_cell<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_driving_cell");
     let lib_cell = symbol("-lib_cell")
@@ -3396,7 +3587,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut lib_cell = None;
             let mut rise = false;
             let mut fall = false;
@@ -3434,8 +3625,10 @@ where
                     _ => unreachable!(),
                 }
             }
-            let port_list = port_list.expect("set_driving_cell:port_list");
-            Command::SetDrivingCell(SetDrivingCell {
+            let port_list = port_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_driving_cell:port_list",
+            )))?;
+            Ok(Command::SetDrivingCell(SetDrivingCell {
                 lib_cell,
                 rise,
                 fall,
@@ -3452,7 +3645,7 @@ where
                 input_transition_fall,
                 multiply_by,
                 port_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -3480,14 +3673,14 @@ fn test_set_driving_cell() {
             multiply_by: Some(0.1),
             port_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_fanout_load`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetFanoutLoad {
     pub value: f64,
     pub port_list: Object,
@@ -3496,7 +3689,8 @@ pub struct SetFanoutLoad {
 fn set_fanout_load<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_fanout_load");
     let value = float().map(|x| CommandArg::Value(x));
@@ -3504,7 +3698,7 @@ where
     let args = (attempt(value), attempt(port_list));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut port_list = None;
             for x in xs {
@@ -3514,9 +3708,10 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.expect("set_fanout_load:value");
-            let port_list = port_list.expect("set_fanout_load:port_list");
-            Command::SetFanoutLoad(SetFanoutLoad { value, port_list })
+            let value = value.ok_or(Error::Expected(Info::Borrowed("set_fanout_load:value")))?;
+            let port_list =
+                port_list.ok_or(Error::Expected(Info::Borrowed("set_fanout_load:port_list")))?;
+            Ok(Command::SetFanoutLoad(SetFanoutLoad { value, port_list }))
         })
         .parse_stream(input)
 }
@@ -3530,14 +3725,14 @@ fn test_set_fanout_load() {
             value: 0.1,
             port_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_input_transition`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetInputTransition {
     pub rise: bool,
     pub fall: bool,
@@ -3552,7 +3747,8 @@ pub struct SetInputTransition {
 fn set_input_transition<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_input_transition");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -3577,7 +3773,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -3599,9 +3795,13 @@ where
                     _ => unreachable!(),
                 }
             }
-            let transition = transition.expect("set_input_transition:transition");
-            let port_list = port_list.expect("set_input_transition:port_list");
-            Command::SetInputTransition(SetInputTransition {
+            let transition = transition.ok_or(Error::Expected(Info::Borrowed(
+                "set_input_transition:transition",
+            )))?;
+            let port_list = port_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_input_transition:port_list",
+            )))?;
+            Ok(Command::SetInputTransition(SetInputTransition {
                 rise,
                 fall,
                 min,
@@ -3610,7 +3810,7 @@ where
                 clock_fall,
                 transition,
                 port_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -3630,14 +3830,14 @@ fn test_set_input_transition() {
             transition: 0.1,
             port_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_load`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetLoad {
     pub min: bool,
     pub max: bool,
@@ -3651,7 +3851,8 @@ pub struct SetLoad {
 fn set_load<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_load");
     let min = symbol("-min").map(|_| CommandArg::Min);
@@ -3672,7 +3873,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut min = false;
             let mut max = false;
             let mut subtract_pin_load = false;
@@ -3692,9 +3893,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.expect("set_load:value");
-            let objects = objects.expect("set_load:objects");
-            Command::SetLoad(SetLoad {
+            let value = value.ok_or(Error::Expected(Info::Borrowed("set_load:value")))?;
+            let objects = objects.ok_or(Error::Expected(Info::Borrowed("set_load:objects")))?;
+            Ok(Command::SetLoad(SetLoad {
                 min,
                 max,
                 subtract_pin_load,
@@ -3702,7 +3903,7 @@ where
                 wire_load,
                 value,
                 objects,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -3721,14 +3922,14 @@ fn test_set_load() {
             value: 0.1,
             objects: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_logic_dc`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetLogicDc {
     pub port_list: Object,
 }
@@ -3736,14 +3937,15 @@ pub struct SetLogicDc {
 fn set_logic_dc<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_logic_dc");
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(port_list),);
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut port_list = None;
             for x in xs {
                 match x {
@@ -3751,8 +3953,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let port_list = port_list.expect("set_logic_dc:port_list");
-            Command::SetLogicDc(SetLogicDc { port_list })
+            let port_list =
+                port_list.ok_or(Error::Expected(Info::Borrowed("set_logic_dc:port_list")))?;
+            Ok(Command::SetLogicDc(SetLogicDc { port_list }))
         })
         .parse_stream(input)
 }
@@ -3765,14 +3968,14 @@ fn test_set_logic_dc() {
         Command::SetLogicDc(SetLogicDc {
             port_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_logic_one`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetLogicOne {
     pub port_list: Object,
 }
@@ -3780,14 +3983,15 @@ pub struct SetLogicOne {
 fn set_logic_one<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_logic_one");
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(port_list),);
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut port_list = None;
             for x in xs {
                 match x {
@@ -3795,8 +3999,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let port_list = port_list.expect("set_logic_one:port_list");
-            Command::SetLogicOne(SetLogicOne { port_list })
+            let port_list =
+                port_list.ok_or(Error::Expected(Info::Borrowed("set_logic_one:port_list")))?;
+            Ok(Command::SetLogicOne(SetLogicOne { port_list }))
         })
         .parse_stream(input)
 }
@@ -3809,14 +4014,14 @@ fn test_set_logic_one() {
         Command::SetLogicOne(SetLogicOne {
             port_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_logic_zero`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetLogicZero {
     pub port_list: Object,
 }
@@ -3824,14 +4029,15 @@ pub struct SetLogicZero {
 fn set_logic_zero<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_logic_zero");
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(port_list),);
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut port_list = None;
             for x in xs {
                 match x {
@@ -3839,8 +4045,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let port_list = port_list.expect("set_logic_zero:port_list");
-            Command::SetLogicZero(SetLogicZero { port_list })
+            let port_list =
+                port_list.ok_or(Error::Expected(Info::Borrowed("set_logic_zero:port_list")))?;
+            Ok(Command::SetLogicZero(SetLogicZero { port_list }))
         })
         .parse_stream(input)
 }
@@ -3853,14 +4060,14 @@ fn test_set_logic_zero() {
         Command::SetLogicZero(SetLogicZero {
             port_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_max_area`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMaxArea {
     pub area_value: f64,
 }
@@ -3868,14 +4075,15 @@ pub struct SetMaxArea {
 fn set_max_area<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_max_area");
     let area_value = float().map(|x| CommandArg::Value(x));
     let args = (attempt(area_value),);
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut area_value = None;
             for x in xs {
                 match x {
@@ -3883,8 +4091,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let area_value = area_value.expect("set_max_area:area_value");
-            Command::SetMaxArea(SetMaxArea { area_value })
+            let area_value =
+                area_value.ok_or(Error::Expected(Info::Borrowed("set_max_area:area_value")))?;
+            Ok(Command::SetMaxArea(SetMaxArea { area_value }))
         })
         .parse_stream(input)
 }
@@ -3895,14 +4104,14 @@ fn test_set_max_area() {
     let tgt = "set_max_area 0.1";
     assert_eq!(
         Command::SetMaxArea(SetMaxArea { area_value: 0.1 }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_max_capacitance`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMaxCapacitance {
     pub value: f64,
     pub objects: Object,
@@ -3911,7 +4120,8 @@ pub struct SetMaxCapacitance {
 fn set_max_capacitance<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_max_capacitance");
     let value = float().map(|x| CommandArg::Value(x));
@@ -3919,7 +4129,7 @@ where
     let args = (attempt(value), attempt(objects));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut objects = None;
             for x in xs {
@@ -3929,9 +4139,15 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.expect("set_max_capacitance:value");
-            let objects = objects.expect("set_max_capacitance:objects");
-            Command::SetMaxCapacitance(SetMaxCapacitance { value, objects })
+            let value =
+                value.ok_or(Error::Expected(Info::Borrowed("set_max_capacitance:value")))?;
+            let objects = objects.ok_or(Error::Expected(Info::Borrowed(
+                "set_max_capacitance:objects",
+            )))?;
+            Ok(Command::SetMaxCapacitance(SetMaxCapacitance {
+                value,
+                objects,
+            }))
         })
         .parse_stream(input)
 }
@@ -3945,14 +4161,14 @@ fn test_set_max_capacitance() {
             value: 0.1,
             objects: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_max_fanout`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMaxFanout {
     pub value: f64,
     pub objects: Object,
@@ -3961,7 +4177,8 @@ pub struct SetMaxFanout {
 fn set_max_fanout<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_max_fanout");
     let value = float().map(|x| CommandArg::Value(x));
@@ -3969,7 +4186,7 @@ where
     let args = (attempt(value), attempt(objects));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut objects = None;
             for x in xs {
@@ -3979,9 +4196,10 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.expect("set_max_fanout:value");
-            let objects = objects.expect("set_max_fanout:objects");
-            Command::SetMaxFanout(SetMaxFanout { value, objects })
+            let value = value.ok_or(Error::Expected(Info::Borrowed("set_max_fanout:value")))?;
+            let objects =
+                objects.ok_or(Error::Expected(Info::Borrowed("set_max_fanout:objects")))?;
+            Ok(Command::SetMaxFanout(SetMaxFanout { value, objects }))
         })
         .parse_stream(input)
 }
@@ -3995,14 +4213,14 @@ fn test_set_max_fanout() {
             value: 0.1,
             objects: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_max_transition`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMaxTransition {
     pub clock_path: bool,
     pub data_path: bool,
@@ -4015,7 +4233,8 @@ pub struct SetMaxTransition {
 fn set_max_transition<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_max_transition");
     let clock_path = symbol("-clock_path").map(|_| CommandArg::ClockPath);
@@ -4034,7 +4253,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut clock_path = false;
             let mut data_path = false;
             let mut rise = false;
@@ -4052,16 +4271,18 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.expect("set_max_transition:value");
-            let object_list = object_list.expect("set_max_transition:object_list");
-            Command::SetMaxTransition(SetMaxTransition {
+            let value = value.ok_or(Error::Expected(Info::Borrowed("set_max_transition:value")))?;
+            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_max_transition:object_list",
+            )))?;
+            Ok(Command::SetMaxTransition(SetMaxTransition {
                 clock_path,
                 data_path,
                 rise,
                 fall,
                 value,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -4079,14 +4300,14 @@ fn test_set_max_transition() {
             value: 0.1,
             object_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_min_capacitance`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMinCapacitance {
     pub value: f64,
     pub objects: Object,
@@ -4095,7 +4316,8 @@ pub struct SetMinCapacitance {
 fn set_min_capacitance<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_min_capacitance");
     let value = float().map(|x| CommandArg::Value(x));
@@ -4103,7 +4325,7 @@ where
     let args = (attempt(value), attempt(objects));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut objects = None;
             for x in xs {
@@ -4113,9 +4335,15 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.expect("set_min_capacitance:value");
-            let objects = objects.expect("set_min_capacitance:objects");
-            Command::SetMinCapacitance(SetMinCapacitance { value, objects })
+            let value =
+                value.ok_or(Error::Expected(Info::Borrowed("set_min_capacitance:value")))?;
+            let objects = objects.ok_or(Error::Expected(Info::Borrowed(
+                "set_min_capacitance:objects",
+            )))?;
+            Ok(Command::SetMinCapacitance(SetMinCapacitance {
+                value,
+                objects,
+            }))
         })
         .parse_stream(input)
 }
@@ -4129,14 +4357,14 @@ fn test_set_min_capacitance() {
             value: 0.1,
             objects: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_min_porosity`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMinPorosity {
     pub porosity_value: f64,
     pub object_list: Object,
@@ -4145,7 +4373,8 @@ pub struct SetMinPorosity {
 fn set_min_porosity<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_min_porosity");
     let porosity_value = float().map(|x| CommandArg::Value(x));
@@ -4153,7 +4382,7 @@ where
     let args = (attempt(porosity_value), attempt(object_list));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut objects = None;
             for x in xs {
@@ -4163,12 +4392,14 @@ where
                     _ => unreachable!(),
                 }
             }
-            let porosity_value = value.expect("set_min_porosity:value");
-            let object_list = objects.expect("set_min_porosity:objects");
-            Command::SetMinPorosity(SetMinPorosity {
+            let porosity_value =
+                value.ok_or(Error::Expected(Info::Borrowed("set_min_porosity:value")))?;
+            let object_list =
+                objects.ok_or(Error::Expected(Info::Borrowed("set_min_porosity:objects")))?;
+            Ok(Command::SetMinPorosity(SetMinPorosity {
                 porosity_value,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -4182,14 +4413,14 @@ fn test_set_min_porosity() {
             porosity_value: 0.1,
             object_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_operating_conditions`
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SetOperatingConditions {
     pub library: Option<Object>,
     pub analysis_type: Option<String>,
@@ -4204,7 +4435,8 @@ pub struct SetOperatingConditions {
 fn set_operating_conditions<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_operating_conditions");
     let library = symbol("-library")
@@ -4237,7 +4469,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut library = None;
             let mut analysis_type = None;
             let mut max = None;
@@ -4259,7 +4491,7 @@ where
                     _ => unreachable!(),
                 }
             }
-            Command::SetOperatingConditions(SetOperatingConditions {
+            Ok(Command::SetOperatingConditions(SetOperatingConditions {
                 library,
                 analysis_type,
                 max,
@@ -4268,7 +4500,7 @@ where
                 min_library,
                 object_list,
                 condition,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -4289,14 +4521,14 @@ fn test_set_operating_conditions() {
             object_list: Some(Object::String(vec![String::from("a")])),
             condition: Some(String::from("a")),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_port_fanout_number`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetPortFanoutNumber {
     pub value: f64,
     pub port_list: Object,
@@ -4305,7 +4537,8 @@ pub struct SetPortFanoutNumber {
 fn set_port_fanout_number<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_port_fanout_number");
     let value = float().map(|x| CommandArg::Value(x));
@@ -4313,7 +4546,7 @@ where
     let args = (attempt(value), attempt(port_list));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut port_list = None;
             for x in xs {
@@ -4323,9 +4556,16 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.expect("set_port_fanout_number:value");
-            let port_list = port_list.expect("set_port_fanout_number:port_list");
-            Command::SetPortFanoutNumber(SetPortFanoutNumber { value, port_list })
+            let value = value.ok_or(Error::Expected(Info::Borrowed(
+                "set_port_fanout_number:value",
+            )))?;
+            let port_list = port_list.ok_or(Error::Expected(Info::Borrowed(
+                "set_port_fanout_number:port_list",
+            )))?;
+            Ok(Command::SetPortFanoutNumber(SetPortFanoutNumber {
+                value,
+                port_list,
+            }))
         })
         .parse_stream(input)
 }
@@ -4339,14 +4579,14 @@ fn test_set_port_fanout_number() {
             value: 0.1,
             port_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_resistance`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetResistance {
     pub min: bool,
     pub max: bool,
@@ -4357,7 +4597,8 @@ pub struct SetResistance {
 fn set_resistance<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_resistance");
     let min = symbol("-min").map(|_| CommandArg::Min);
@@ -4372,7 +4613,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut min = false;
             let mut max = false;
             let mut value = None;
@@ -4386,14 +4627,15 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.expect("set_resistance:value");
-            let net_list = net_list.expect("set_resistance:net_list");
-            Command::SetResistance(SetResistance {
+            let value = value.ok_or(Error::Expected(Info::Borrowed("set_resistance:value")))?;
+            let net_list =
+                net_list.ok_or(Error::Expected(Info::Borrowed("set_resistance:net_list")))?;
+            Ok(Command::SetResistance(SetResistance {
                 min,
                 max,
                 value,
                 net_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -4409,14 +4651,14 @@ fn test_set_resistance() {
             value: 0.1,
             net_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_timing_derate`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetTimingDerate {
     pub cell_delay: bool,
     pub cell_check: bool,
@@ -4437,7 +4679,8 @@ pub struct SetTimingDerate {
 fn set_timing_derate<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_timing_derate");
     let cell_delay = symbol("-cell_delay").map(|_| CommandArg::CellDelay);
@@ -4472,7 +4715,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut cell_delay = false;
             let mut cell_check = false;
             let mut net_delay = false;
@@ -4506,8 +4749,10 @@ where
                     _ => unreachable!(),
                 }
             }
-            let derate_value = derate_value.expect("set_timing_derate:derate_value");
-            Command::SetTimingDerate(SetTimingDerate {
+            let derate_value = derate_value.ok_or(Error::Expected(Info::Borrowed(
+                "set_timing_derate:derate_value",
+            )))?;
+            Ok(Command::SetTimingDerate(SetTimingDerate {
                 cell_delay,
                 cell_check,
                 net_delay,
@@ -4522,7 +4767,7 @@ where
                 increment,
                 derate_value,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -4548,14 +4793,14 @@ fn test_set_timing_derate() {
             derate_value: 0.1,
             object_list: Some(Object::String(vec![String::from("a")])),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_voltage`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetVoltage {
     pub min: Option<f64>,
     pub object_list: Option<Object>,
@@ -4565,7 +4810,8 @@ pub struct SetVoltage {
 fn set_voltage<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_voltage");
     let min = symbol("-min").with(float()).map(|x| CommandArg::MinVal(x));
@@ -4580,7 +4826,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut min = None;
             let mut object_list = None;
             let mut max_case_voltage = None;
@@ -4592,12 +4838,14 @@ where
                     _ => unreachable!(),
                 }
             }
-            let max_case_voltage = max_case_voltage.expect("set_voltage:max_case_voltage");
-            Command::SetVoltage(SetVoltage {
+            let max_case_voltage = max_case_voltage.ok_or(Error::Expected(Info::Borrowed(
+                "set_voltage:max_case_voltage",
+            )))?;
+            Ok(Command::SetVoltage(SetVoltage {
                 min,
                 object_list,
                 max_case_voltage,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -4612,14 +4860,14 @@ fn test_set_voltage() {
             object_list: Some(Object::String(vec![String::from("a")])),
             max_case_voltage: 0.1,
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_wire_load_min_block_size`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetWireLoadMinBlockSize {
     pub size: f64,
 }
@@ -4627,14 +4875,15 @@ pub struct SetWireLoadMinBlockSize {
 fn set_wire_load_min_block_size<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_wire_load_min_block_size");
     let size = float().map(|x| CommandArg::Value(x));
     let args = (attempt(size),);
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut size = None;
             for x in xs {
                 match x {
@@ -4642,8 +4891,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let size = size.expect("set_wire_load_min_block_size:size");
-            Command::SetWireLoadMinBlockSize(SetWireLoadMinBlockSize { size })
+            let size = size.ok_or(Error::Expected(Info::Borrowed(
+                "set_wire_load_min_block_size:size",
+            )))?;
+            Ok(Command::SetWireLoadMinBlockSize(SetWireLoadMinBlockSize {
+                size,
+            }))
         })
         .parse_stream(input)
 }
@@ -4654,14 +4907,14 @@ fn test_set_wire_load_min_block_size() {
     let tgt = "set_wire_load_min_block_size 0.1";
     assert_eq!(
         Command::SetWireLoadMinBlockSize(SetWireLoadMinBlockSize { size: 0.1 }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_wire_load_mode`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetWireLoadMode {
     pub mode_name: String,
 }
@@ -4669,14 +4922,15 @@ pub struct SetWireLoadMode {
 fn set_wire_load_mode<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_wire_load_mode");
     let mode_name = item().map(|x| CommandArg::String(x));
     let args = (attempt(mode_name),);
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut mode_name = None;
             for x in xs {
                 match x {
@@ -4684,8 +4938,10 @@ where
                     _ => unreachable!(),
                 }
             }
-            let mode_name = mode_name.expect("set_wire_load_mode:mode_name");
-            Command::SetWireLoadMode(SetWireLoadMode { mode_name })
+            let mode_name = mode_name.ok_or(Error::Expected(Info::Borrowed(
+                "set_wire_load_mode:mode_name",
+            )))?;
+            Ok(Command::SetWireLoadMode(SetWireLoadMode { mode_name }))
         })
         .parse_stream(input)
 }
@@ -4698,14 +4954,14 @@ fn test_set_wire_load_mode() {
         Command::SetWireLoadMode(SetWireLoadMode {
             mode_name: String::from("a")
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_wire_load_model`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetWireLoadModel {
     pub name: String,
     pub library: Option<Object>,
@@ -4717,7 +4973,8 @@ pub struct SetWireLoadModel {
 fn set_wire_load_model<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_wire_load_model");
     let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
@@ -4736,7 +4993,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut name = None;
             let mut library = None;
             let mut min = false;
@@ -4752,14 +5009,14 @@ where
                     _ => unreachable!(),
                 }
             }
-            let name = name.expect("set_wire_load_model:name");
-            Command::SetWireLoadModel(SetWireLoadModel {
+            let name = name.ok_or(Error::Expected(Info::Borrowed("set_wire_load_model:name")))?;
+            Ok(Command::SetWireLoadModel(SetWireLoadModel {
                 name,
                 library,
                 min,
                 max,
                 object_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -4776,14 +5033,14 @@ fn test_set_wire_load_model() {
             max: true,
             object_list: Some(Object::String(vec![String::from("a")])),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_wire_load_selection_group`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetWireLoadSelectionGroup {
     pub library: Option<Object>,
     pub min: bool,
@@ -4795,7 +5052,8 @@ pub struct SetWireLoadSelectionGroup {
 fn set_wire_load_selection_group<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_wire_load_selection_group");
     let library = symbol("-library")
@@ -4814,7 +5072,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut library = None;
             let mut min = false;
             let mut max = false;
@@ -4830,14 +5088,18 @@ where
                     _ => unreachable!(),
                 }
             }
-            let group_name = group_name.expect("set_wire_load_selection_group:group_name");
-            Command::SetWireLoadSelectionGroup(SetWireLoadSelectionGroup {
-                library,
-                min,
-                max,
-                group_name,
-                object_list,
-            })
+            let group_name = group_name.ok_or(Error::Expected(Info::Borrowed(
+                "set_wire_load_selection_group:group_name",
+            )))?;
+            Ok(Command::SetWireLoadSelectionGroup(
+                SetWireLoadSelectionGroup {
+                    library,
+                    min,
+                    max,
+                    group_name,
+                    object_list,
+                },
+            ))
         })
         .parse_stream(input)
 }
@@ -4854,14 +5116,14 @@ fn test_set_wire_load_selection_group() {
             group_name: String::from("a"),
             object_list: Some(Object::AllClocks),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `create_voltage_area`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CreateVoltageArea {
     pub name: String,
     pub coordinate: Vec<f64>,
@@ -4873,7 +5135,8 @@ pub struct CreateVoltageArea {
 fn create_voltage_area<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("create_voltage_area");
     let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
@@ -4896,7 +5159,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut name = None;
             let mut coordinate = Vec::new();
             let mut guard_band_x = None;
@@ -4912,15 +5175,17 @@ where
                     _ => unreachable!(),
                 }
             }
-            let name = name.expect("create_voltage_area:name");
-            let cell_list = cell_list.expect("create_voltage_area:cell_list");
-            Command::CreateVoltageArea(CreateVoltageArea {
+            let name = name.ok_or(Error::Expected(Info::Borrowed("create_voltage_area:name")))?;
+            let cell_list = cell_list.ok_or(Error::Expected(Info::Borrowed(
+                "create_voltage_area:cell_list",
+            )))?;
+            Ok(Command::CreateVoltageArea(CreateVoltageArea {
                 name,
                 coordinate,
                 guard_band_x,
                 guard_band_y,
                 cell_list,
-            })
+            }))
         })
         .parse_stream(input)
 }
@@ -4937,14 +5202,14 @@ fn test_create_voltage_area() {
             guard_band_y: Some(0.1),
             cell_list: Object::String(vec![String::from("a")]),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_level_shifter_strategy`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetLevelShifterStrategy {
     pub rule: Option<String>,
 }
@@ -4952,14 +5217,15 @@ pub struct SetLevelShifterStrategy {
 fn set_level_shifter_strategy<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_level_shifter_strategy");
     let rule = symbol("-rule").with(item()).map(|x| CommandArg::Rule(x));
     let args = (attempt(rule),);
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut rule = None;
             for x in xs {
                 match x {
@@ -4967,7 +5233,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            Command::SetLevelShifterStrategy(SetLevelShifterStrategy { rule })
+            Ok(Command::SetLevelShifterStrategy(SetLevelShifterStrategy {
+                rule,
+            }))
         })
         .parse_stream(input)
 }
@@ -4980,14 +5248,14 @@ fn test_set_level_shifter_strategy() {
         Command::SetLevelShifterStrategy(SetLevelShifterStrategy {
             rule: Some(String::from("a")),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_level_shifter_threshold`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetLevelShifterThreshold {
     pub voltage: Option<f64>,
     pub percent: Option<f64>,
@@ -4996,7 +5264,8 @@ pub struct SetLevelShifterThreshold {
 fn set_level_shifter_threshold<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let command = symbol("set_level_shifter_threshold");
     let voltage = symbol("-voltage")
@@ -5008,7 +5277,7 @@ where
     let args = (attempt(voltage), attempt(percent));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut voltage = None;
             let mut percent = None;
             for x in xs {
@@ -5018,7 +5287,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            Command::SetLevelShifterThreshold(SetLevelShifterThreshold { voltage, percent })
+            Ok(Command::SetLevelShifterThreshold(
+                SetLevelShifterThreshold { voltage, percent },
+            ))
         })
         .parse_stream(input)
 }
@@ -5032,14 +5303,14 @@ fn test_set_level_shifter_threshold() {
             voltage: Some(0.1),
             percent: Some(0.1),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_max_dynamic_power`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMaxDynamicPower {
     pub power: f64,
     pub unit: Option<String>,
@@ -5048,6 +5319,8 @@ pub struct SetMaxDynamicPower {
 fn set_max_dynamic_power<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_max_dynamic_power");
@@ -5056,7 +5329,7 @@ where
     let args = (attempt(power), attempt(unit));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut power = None;
             let mut unit = None;
             for x in xs {
@@ -5066,8 +5339,13 @@ where
                     _ => unreachable!(),
                 }
             }
-            let power = power.expect("set_max_dynamic_power:power");
-            Command::SetMaxDynamicPower(SetMaxDynamicPower { power, unit })
+            let power = power.ok_or(Error::Expected(Info::Borrowed(
+                "set_max_dynamic_power:power",
+            )))?;
+            Ok(Command::SetMaxDynamicPower(SetMaxDynamicPower {
+                power,
+                unit,
+            }))
         })
         .parse_stream(input)
 }
@@ -5081,14 +5359,14 @@ fn test_set_max_dynamic_power() {
             power: 0.1,
             unit: Some(String::from("mW")),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
 
 // -----------------------------------------------------------------------------
 
 /// A type containing information of `set_max_leakage_power`
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetMaxLeakagePower {
     pub power: f64,
     pub unit: Option<String>,
@@ -5097,6 +5375,8 @@ pub struct SetMaxLeakagePower {
 fn set_max_leakage_power<I>(input: &mut I) -> ParseResult<Command, I>
 where
     I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_max_leakage_power");
@@ -5105,7 +5385,7 @@ where
     let args = (attempt(power), attempt(unit));
     command
         .with(many(choice(args)))
-        .map(|xs: Vec<_>| {
+        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
             let mut power = None;
             let mut unit = None;
             for x in xs {
@@ -5115,8 +5395,13 @@ where
                     _ => unreachable!(),
                 }
             }
-            let power = power.expect("set_max_leakage_power:power");
-            Command::SetMaxLeakagePower(SetMaxLeakagePower { power, unit })
+            let power = power.ok_or(Error::Expected(Info::Borrowed(
+                "set_max_leakage_power:power",
+            )))?;
+            Ok(Command::SetMaxLeakagePower(SetMaxLeakagePower {
+                power,
+                unit,
+            }))
         })
         .parse_stream(input)
 }
@@ -5130,6 +5415,6 @@ fn test_set_max_leakage_power() {
             power: 0.1,
             unit: Some(String::from("mW")),
         }),
-        parser.parse(tgt).unwrap().0
+        parser.easy_parse(tgt).unwrap().0
     );
 }
