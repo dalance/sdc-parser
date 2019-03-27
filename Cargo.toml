@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 description = "A parser library for Synopsys Design Constraints (sdc)"
 edition = "2018"
+build = "build.rs"
 
 [dependencies]
 combine = "3.8.1"
