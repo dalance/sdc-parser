@@ -4,13 +4,39 @@ pub mod util;
 
 use crate::sdc::{sdc, Sdc};
 use combine::error::{ParseError, ParseResult};
-use combine::{parser, Parser, Stream};
+use combine::{Parser, Stream};
 use std::marker::PhantomData;
 
-/// A type representing sdc parser
-pub struct SdcParser<I>(PhantomData<fn(I) -> I>);
+/// Parse Sdc
+///
+/// This function isn't failed.
+/// Any line failed to parse is contained as `sdc::Command::Unknown`.
+/// Any vendor extension (eg. `derive_clock_uncertainty`) is contained as `Sdc::Command::Unknown` too.
+///
+/// # Examples
+///
+/// ```
+/// use sdc_parser::{self, sdc};
+///
+/// let result = sdc_parser::parse("current_instance duv");
+///
+/// let expect = sdc::Sdc {
+///     commands: vec![sdc::Command::CurrentInstance(
+///         sdc::CurrentInstance {
+///             instance: Some(String::from("duv"))
+///         }
+///     )]
+/// };
+/// assert_eq!(expect, result);
+/// ```
+pub fn parse(s: &str) -> Sdc {
+    let mut parser = sdc_parser();
+    parser.easy_parse(s).unwrap().0
+}
 
-impl<I> Parser for SdcParser<I>
+struct SdcParser_<I>(PhantomData<fn(I) -> I>);
+
+impl<I> Parser for SdcParser_<I>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -22,37 +48,17 @@ where
     type PartialState = ();
     #[inline]
     fn parse_stream(&mut self, input: &mut I) -> ParseResult<Self::Output, Self::Input> {
-        let mut parser = parser(sdc);
+        let mut parser = sdc();
         parser.parse_stream(input)
     }
 }
 
-/// Generate sdc parser
-///
-/// # Examples
-///
-/// ```
-/// use sdc_parser::{sdc_parser, sdc};
-/// use combine::parser::Parser;
-///
-/// let mut parser = sdc_parser();
-/// let (result, rest) = parser.easy_parse("current_instance duv").unwrap();
-///
-/// let expect = sdc::Sdc {
-///     commands: vec![sdc::Command::CurrentInstance(
-///         sdc::CurrentInstance {
-///             instance: Some(String::from("duv"))
-///         }
-///     )]
-/// };
-/// assert_eq!(expect, result);
-/// ```
-pub fn sdc_parser<I>() -> SdcParser<I>
+fn sdc_parser<I>() -> SdcParser_<I>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    SdcParser(PhantomData)
+    SdcParser_(PhantomData)
 }
 
 #[cfg(test)]

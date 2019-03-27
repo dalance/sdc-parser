@@ -2,7 +2,7 @@ use crate::object::*;
 use crate::util::*;
 use combine::char::{char, space, string};
 use combine::easy::{Error, Info};
-use combine::error::{ParseError, ParseResult};
+use combine::error::ParseError;
 use combine::parser::Parser;
 use combine::{attempt, choice, look_ahead, many, many1, none_of, optional, parser, token, Stream};
 
@@ -78,6 +78,7 @@ pub enum Command {
     SetWireLoadMode(SetWireLoadMode),
     SetWireLoadModel(SetWireLoadModel),
     SetWireLoadSelectionGroup(SetWireLoadSelectionGroup),
+    /// Any unknown command including vendor extensions
     Unknown(String),
     Whitespace,
 }
@@ -195,113 +196,105 @@ enum CommandArg {
 
 // -----------------------------------------------------------------------------
 
-pub(crate) fn sdc<I>(input: &mut I) -> ParseResult<Sdc, I>
+pub(crate) fn sdc<I>() -> impl Parser<Input = I, Output = Sdc>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
     <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
-    many1(parser(command))
-        .map(|x| Sdc { commands: x })
-        .parse_stream(input)
+    many1(command()).map(|x| Sdc { commands: x })
 }
 
-fn command<I>(input: &mut I) -> ParseResult<Command, I>
+fn command<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
     <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
     let c = (
-        attempt(parser(create_clock)),
-        attempt(parser(create_generated_clock)),
-        attempt(parser(create_voltage_area)),
-        attempt(parser(current_instance)),
+        attempt(create_clock()),
+        attempt(create_generated_clock()),
+        attempt(create_voltage_area()),
+        attempt(current_instance()),
     );
-    let g = (parser(group_path),);
-    let set = (attempt(parser(set_sdc_version)), attempt(parser(set)));
-    let set_ca = (parser(set_case_analysis),);
+    let g = (group_path(),);
+    let set = (attempt(set_sdc_version()), attempt(set()));
+    let set_ca = (set_case_analysis(),);
     let set_cl = (
-        attempt(parser(set_clock_gating_check)),
-        attempt(parser(set_clock_groups)),
-        attempt(parser(set_clock_latency)),
-        attempt(parser(set_clock_sense)),
-        attempt(parser(set_clock_transition)),
-        attempt(parser(set_clock_uncertainty)),
+        attempt(set_clock_gating_check()),
+        attempt(set_clock_groups()),
+        attempt(set_clock_latency()),
+        attempt(set_clock_sense()),
+        attempt(set_clock_transition()),
+        attempt(set_clock_uncertainty()),
     );
     let set_d = (
-        attempt(parser(set_data_check)),
-        attempt(parser(set_disable_timing)),
-        attempt(parser(set_drive)),
-        attempt(parser(set_driving_cell)),
+        attempt(set_data_check()),
+        attempt(set_disable_timing()),
+        attempt(set_drive()),
+        attempt(set_driving_cell()),
     );
-    let set_f = (
-        attempt(parser(set_false_path)),
-        attempt(parser(set_fanout_load)),
-    );
+    let set_f = (attempt(set_false_path()), attempt(set_fanout_load()));
     let set_id = (
-        attempt(parser(set_ideal_latency)),
-        attempt(parser(set_ideal_network)),
-        attempt(parser(set_ideal_transition)),
+        attempt(set_ideal_latency()),
+        attempt(set_ideal_network()),
+        attempt(set_ideal_transition()),
     );
-    let set_in = (
-        attempt(parser(set_input_delay)),
-        attempt(parser(set_input_transition)),
-    );
+    let set_in = (attempt(set_input_delay()), attempt(set_input_transition()));
     let set_le = (
-        attempt(parser(set_level_shifter_strategy)),
-        attempt(parser(set_level_shifter_threshold)),
+        attempt(set_level_shifter_strategy()),
+        attempt(set_level_shifter_threshold()),
     );
     let set_lo = (
-        attempt(parser(set_load)),
-        attempt(parser(set_logic_dc)),
-        attempt(parser(set_logic_one)),
-        attempt(parser(set_logic_zero)),
+        attempt(set_load()),
+        attempt(set_logic_dc()),
+        attempt(set_logic_one()),
+        attempt(set_logic_zero()),
     );
     let set_ma = (
-        attempt(parser(set_max_delay)),
-        attempt(parser(set_max_time_borrow)),
-        attempt(parser(set_max_area)),
-        attempt(parser(set_max_capacitance)),
-        attempt(parser(set_max_fanout)),
-        attempt(parser(set_max_transition)),
-        attempt(parser(set_max_dynamic_power)),
-        attempt(parser(set_max_leakage_power)),
+        attempt(set_max_delay()),
+        attempt(set_max_time_borrow()),
+        attempt(set_max_area()),
+        attempt(set_max_capacitance()),
+        attempt(set_max_fanout()),
+        attempt(set_max_transition()),
+        attempt(set_max_dynamic_power()),
+        attempt(set_max_leakage_power()),
     );
     let set_mi = (
-        attempt(parser(set_min_delay)),
-        attempt(parser(set_min_pulse_width)),
-        attempt(parser(set_min_capacitance)),
-        attempt(parser(set_min_porosity)),
+        attempt(set_min_delay()),
+        attempt(set_min_pulse_width()),
+        attempt(set_min_capacitance()),
+        attempt(set_min_porosity()),
     );
-    let set_mu = (parser(set_multicycle_path),);
+    let set_mu = (set_multicycle_path(),);
     let set_o = (
-        attempt(parser(set_operating_conditions)),
-        attempt(parser(set_output_delay)),
+        attempt(set_operating_conditions()),
+        attempt(set_output_delay()),
     );
     let set_p = (
-        attempt(parser(set_propagated_clock)),
-        attempt(parser(set_port_fanout_number)),
+        attempt(set_propagated_clock()),
+        attempt(set_port_fanout_number()),
     );
     let set_w = (
-        attempt(parser(set_wire_load_min_block_size)),
-        attempt(parser(set_wire_load_model)),
-        attempt(parser(set_wire_load_mode)),
-        attempt(parser(set_wire_load_selection_group)),
+        attempt(set_wire_load_min_block_size()),
+        attempt(set_wire_load_model()),
+        attempt(set_wire_load_mode()),
+        attempt(set_wire_load_selection_group()),
     );
     let set__ = (
-        attempt(parser(set_resistance)),
-        attempt(parser(set_sense)),
-        attempt(parser(set_timing_derate)),
-        attempt(parser(set_units)),
-        attempt(parser(set_voltage)),
+        attempt(set_resistance()),
+        attempt(set_sense()),
+        attempt(set_timing_derate()),
+        attempt(set_units()),
+        attempt(set_voltage()),
     );
 
     choice((
-        look_ahead(space()).with(parser(whitespace)),
-        look_ahead(char('\n')).with(parser(linebreak)),
-        look_ahead(string("\r\n")).with(parser(linebreak)),
-        look_ahead(char('#')).with(parser(comment)),
+        look_ahead(space()).with(whitespace()),
+        look_ahead(char('\n')).with(linebreak()),
+        look_ahead(string("\r\n")).with(linebreak()),
+        look_ahead(char('#')).with(comment()),
         attempt(look_ahead(char('c')).with(choice(c))),
         attempt(look_ahead(char('g')).with(choice(g))),
         attempt(look_ahead(string("set ")).with(choice(set))),
@@ -320,59 +313,58 @@ where
         attempt(look_ahead(string("set_p")).with(choice(set_p))),
         attempt(look_ahead(string("set_w")).with(choice(set_w))),
         attempt(choice(set__)),
-        parser(unknown),
+        unknown(),
     ))
-    .parse_stream(input)
 }
 
 // -----------------------------------------------------------------------------
 
-fn whitespace<I>(input: &mut I) -> ParseResult<Command, I>
+fn whitespace<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
     <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
-    let mut command = lex(space()).map(|_| Command::Whitespace);
-    command.parse_stream(input)
+    let command = lex(space()).map(|_| Command::Whitespace);
+    command
 }
 
 // -----------------------------------------------------------------------------
 
-fn linebreak<I>(input: &mut I) -> ParseResult<Command, I>
+fn linebreak<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
     <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
-    let mut command = lex(string("\n").or(string("\r\n"))).map(|_| Command::LineBreak);
-    command.parse_stream(input)
+    let command = lex(string("\n").or(string("\r\n"))).map(|_| Command::LineBreak);
+    command
 }
 
 // -----------------------------------------------------------------------------
 
-fn comment<I>(input: &mut I) -> ParseResult<Command, I>
+fn comment<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
     <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
-    let mut command = token('#')
+    let command = token('#')
         .and(many(none_of("\n".chars())))
         .map(|(_, x)| Command::Comment(x));
-    command.parse_stream(input)
+    command
 }
 
 // -----------------------------------------------------------------------------
 
-fn unknown<I>(input: &mut I) -> ParseResult<Command, I>
+fn unknown<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
     <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
-    let mut command = many1(none_of("\n".chars())).map(|x| Command::Unknown(x));
-    command.parse_stream(input)
+    let command = many1(none_of("\n".chars())).map(|x| Command::Unknown(x));
+    command
 }
 
 // -----------------------------------------------------------------------------
@@ -383,7 +375,7 @@ pub struct CurrentInstance {
     pub instance: Option<String>,
 }
 
-fn current_instance<I>(input: &mut I) -> ParseResult<Command, I>
+fn current_instance<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -404,12 +396,11 @@ where
             }
             Ok(Command::CurrentInstance(CurrentInstance { instance }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_current_instance() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "current_instance dut";
     assert_eq!(
         Command::CurrentInstance(CurrentInstance {
@@ -421,7 +412,7 @@ fn test_current_instance() {
 
 // -----------------------------------------------------------------------------
 
-fn set_sdc_version<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_sdc_version<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -429,12 +420,12 @@ where
 {
     let command = symbol("set").with(symbol("sdc_version"));
     let version = float().map(|x| Command::SetSdcVersion(x));
-    command.with(version).parse_stream(input)
+    command.with(version)
 }
 
 #[test]
 fn test_set_sdc_version() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set sdc_version 2.1";
     assert_eq!(
         Command::SetSdcVersion(2.1),
@@ -451,13 +442,13 @@ pub struct Set {
     pub value: Object,
 }
 
-fn set<I>(input: &mut I) -> ParseResult<Command, I>
+fn set<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
     <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
-    let mut command = symbol("set")
+    let command = symbol("set")
         .with(item())
         .and(parser(object))
         .map(|(x, y)| {
@@ -466,12 +457,12 @@ where
                 value: y,
             })
         });
-    command.parse_stream(input)
+    command
 }
 
 #[test]
 fn test_set() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set a b";
     assert_eq!(
         Command::Set(Set {
@@ -502,23 +493,23 @@ pub struct UnitValue {
     pub value: f64,
 }
 
-fn unit_value<I>(input: &mut I) -> ParseResult<UnitValue, I>
+fn unit_value<I>() -> impl Parser<Input = I, Output = UnitValue>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
     <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
 {
-    let mut unit_value = optional(float()).and(item()).map(|(x, y)| match x {
+    let unit_value = optional(float()).and(item()).map(|(x, y)| match x {
         Some(x) => UnitValue { value: x, unit: y },
         None => UnitValue {
             value: 1.0,
             unit: y,
         },
     });
-    unit_value.parse_stream(input)
+    unit_value
 }
 
-fn set_units<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_units<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -526,22 +517,22 @@ where
 {
     let command = attempt(symbol("set_units")).or(symbol("set_unit"));
     let capacitance = symbol("-capacitance")
-        .with(parser(unit_value))
+        .with(unit_value())
         .map(|x| CommandArg::Capacitance(x));
     let resistance = symbol("-resistance")
-        .with(parser(unit_value))
+        .with(unit_value())
         .map(|x| CommandArg::Resistance(x));
     let time = symbol("-time")
-        .with(parser(unit_value))
+        .with(unit_value())
         .map(|x| CommandArg::Time(x));
     let voltage = symbol("-voltage")
-        .with(parser(unit_value))
+        .with(unit_value())
         .map(|x| CommandArg::VoltageUV(x));
     let current = symbol("-current")
-        .with(parser(unit_value))
+        .with(unit_value())
         .map(|x| CommandArg::Current(x));
     let power = symbol("-power")
-        .with(parser(unit_value))
+        .with(unit_value())
         .map(|x| CommandArg::Power(x));
     let args = (
         attempt(capacitance),
@@ -580,12 +571,11 @@ where
                 power,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_units() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt =
         "set_units -capacitance 1.2pF -resistance 10MOhm -time ns -voltage V -current mA -power mW";
     assert_eq!(
@@ -632,7 +622,7 @@ pub struct CreateClock {
     pub source_objects: Option<Object>,
 }
 
-fn create_clock<I>(input: &mut I) -> ParseResult<Command, I>
+fn create_clock<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -689,12 +679,11 @@ where
                 source_objects,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_create_clock() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "create_clock -period 10 -name clk -waveform {0 5} -add -comment \"aaa\" source";
     assert_eq!(
         Command::CreateClock(CreateClock {
@@ -729,7 +718,7 @@ pub struct CreateGeneratedClock {
     pub source_objects: Object,
 }
 
-fn create_generated_clock<I>(input: &mut I) -> ParseResult<Command, I>
+fn create_generated_clock<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -836,12 +825,11 @@ where
                 source_objects,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_create_generated_clock() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "create_generated_clock -name clk -source src -edges {0 0.5} -divide_by 3 -multiply_by 2 -duty_cycle 0.4 -invert -edge_shift {0 1} -add -master_clock mclk -combinational -comment \"aaa\" clk";
     assert_eq!(
         Command::CreateGeneratedClock(CreateGeneratedClock {
@@ -883,7 +871,7 @@ pub struct GroupPath {
     pub comment: Option<String>,
 }
 
-fn group_path<I>(input: &mut I) -> ParseResult<Command, I>
+fn group_path<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -990,12 +978,11 @@ where
                 comment,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_group_path() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "group_path -name path -default -weight 2.0 -from a -rise_from a -fall_from a -to b -rise_to b -fall_to b -through c -rise_through c -fall_through c -comment \"aaa\"";
     assert_eq!(
         Command::GroupPath(GroupPath {
@@ -1031,7 +1018,7 @@ pub struct SetClockGatingCheck {
     pub object_list: Option<Object>,
 }
 
-fn set_clock_gating_check<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_clock_gating_check<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -1090,12 +1077,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_clock_gating_check() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_clock_gating_check -setup 1.2 -hold 0.5 -rise -fall -high -low a";
     assert_eq!(
         Command::SetClockGatingCheck(SetClockGatingCheck {
@@ -1125,7 +1111,7 @@ pub struct SetClockGroups {
     pub comment: Option<String>,
 }
 
-fn set_clock_groups<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_clock_groups<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -1187,12 +1173,11 @@ where
                 comment,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_clock_groups() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_clock_groups -group clk -logically_exclusive -physically_exclusive -asynchronous -allow_paths -name clk -comment \"aaa\"";
     assert_eq!(
         Command::SetClockGroups(SetClockGroups {
@@ -1226,7 +1211,7 @@ pub struct SetClockLatency {
     pub object_list: Object,
 }
 
-fn set_clock_latency<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_clock_latency<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -1307,12 +1292,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_clock_latency() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt =
         "set_clock_latency -rise -fall -min -max -source -dynamic -late -early -clock clk 0.12 obj";
     assert_eq!(
@@ -1346,7 +1330,7 @@ pub struct SetClockSense {
     pub pin_list: Object,
 }
 
-fn set_clock_sense<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_clock_sense<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -1401,12 +1385,11 @@ where
                 pin_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_clock_sense() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_clock_sense -positive -negative -stop_propagation -pulse a -clocks clk pin";
     assert_eq!(
         Command::SetClockSense(SetClockSense {
@@ -1437,7 +1420,7 @@ pub struct SetSense {
     pub pin_list: Object,
 }
 
-fn set_sense<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_sense<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -1505,12 +1488,11 @@ where
                 pin_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_sense() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt =
         "set_sense -type clock -non_unate -positive -negative -clock_leaf -stop_propagation -pulse a -clocks clk pin";
     assert_eq!(
@@ -1542,7 +1524,7 @@ pub struct SetClockTransition {
     pub clock_list: Object,
 }
 
-fn set_clock_transition<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_clock_transition<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -1598,12 +1580,11 @@ where
                 clock_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_clock_transition() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_clock_transition -rise -fall -min -max 12e-3 clk";
     assert_eq!(
         Command::SetClockTransition(SetClockTransition {
@@ -1637,7 +1618,7 @@ pub struct SetClockUncertainty {
     pub object_list: Option<Object>,
 }
 
-fn set_clock_uncertainty<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_clock_uncertainty<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -1732,12 +1713,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_clock_uncertainty() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_clock_uncertainty -from a -rise_from a -fall_from a -to a -rise_to a -fall_to a -rise -fall -setup -hold 0.1 a";
     assert_eq!(
         Command::SetClockUncertainty(SetClockUncertainty {
@@ -1775,7 +1755,7 @@ pub struct SetDataCheck {
     pub value: f64,
 }
 
-fn set_data_check<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_data_check<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -1860,12 +1840,11 @@ where
                 value,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_data_check() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_data_check -from a -to a -rise_from a -fall_from a -rise_to a -fall_to a -setup -hold -clock a 0.1";
     assert_eq!(
         Command::SetDataCheck(SetDataCheck {
@@ -1894,7 +1873,7 @@ pub struct SetDisableTiming {
     pub cell_pin_list: Object,
 }
 
-fn set_disable_timing<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_disable_timing<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -1932,12 +1911,11 @@ where
                 cell_pin_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_disable_timing() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_disable_timing -from a -to a a";
     assert_eq!(
         Command::SetDisableTiming(SetDisableTiming {
@@ -1970,7 +1948,7 @@ pub struct SetFalsePath {
     pub comment: Option<String>,
 }
 
-fn set_false_path<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_false_path<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -2080,12 +2058,11 @@ where
                 comment,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_false_path() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_false_path -setup -hold -rise -fall -from a -to a -through a -rise_from a -rise_to a -rise_through a -fall_from a -fall_to a -fall_through a -comment \"aaa\"";
     assert_eq!(
         Command::SetFalsePath(SetFalsePath {
@@ -2121,7 +2098,7 @@ pub struct SetIdealLatency {
     pub object_list: Object,
 }
 
-fn set_ideal_latency<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_ideal_latency<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -2175,12 +2152,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_ideal_latency() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_ideal_latency -rise -fall -min -max 0.1 a";
     assert_eq!(
         Command::SetIdealLatency(SetIdealLatency {
@@ -2204,7 +2180,7 @@ pub struct SetIdealNetwork {
     pub object_list: Object,
 }
 
-fn set_ideal_network<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_ideal_network<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -2234,12 +2210,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_ideal_network() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_ideal_network -no_propagate a";
     assert_eq!(
         Command::SetIdealNetwork(SetIdealNetwork {
@@ -2263,7 +2238,7 @@ pub struct SetIdealTransition {
     pub object_list: Object,
 }
 
-fn set_ideal_transition<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_ideal_transition<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -2319,12 +2294,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_ideal_transition() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_ideal_transition -rise -fall -min -max 0.1 a";
     assert_eq!(
         Command::SetIdealTransition(SetIdealTransition {
@@ -2359,7 +2333,7 @@ pub struct SetInputDelay {
     pub port_pin_list: Object,
 }
 
-fn set_input_delay<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_input_delay<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -2456,12 +2430,11 @@ where
                 port_pin_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_input_delay() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_input_delay -clock a -reference_pin a -clock_fall -level_sensitive -rise -fall -max -min -add_delay -network_latency_included -source_latency_included 0.1 a";
     assert_eq!(
         Command::SetInputDelay(SetInputDelay {
@@ -2504,7 +2477,7 @@ pub struct SetMaxDelay {
     pub delay_value: f64,
 }
 
-fn set_max_delay<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_max_delay<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -2617,12 +2590,11 @@ where
                 delay_value,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_max_delay() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_max_delay -rise -fall -from a -to a -through a -rise_from a -rise_to a -rise_through a -fall_from a -fall_to a -fall_through a -ignore_clock_latency -comment \"aaa\" 0.1";
     assert_eq!(
         Command::SetMaxDelay(SetMaxDelay {
@@ -2654,7 +2626,7 @@ pub struct SetMaxTimeBorrow {
     pub object_list: Object,
 }
 
-fn set_max_time_borrow<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_max_time_borrow<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -2687,12 +2659,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_max_time_borrow() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_max_time_borrow 0.1 a";
     assert_eq!(
         Command::SetMaxTimeBorrow(SetMaxTimeBorrow {
@@ -2724,7 +2695,7 @@ pub struct SetMinDelay {
     pub delay_value: f64,
 }
 
-fn set_min_delay<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_min_delay<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -2837,12 +2808,11 @@ where
                 delay_value,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_min_delay() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_min_delay -rise -fall -from a -to a -through a -rise_from a -rise_to a -rise_through a -fall_from a -fall_to a -fall_through a -ignore_clock_latency -comment \"aaa\" 0.1";
     assert_eq!(
         Command::SetMinDelay(SetMinDelay {
@@ -2876,7 +2846,7 @@ pub struct SetMinPulseWidth {
     pub object_list: Option<Object>,
 }
 
-fn set_min_pulse_width<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_min_pulse_width<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -2918,12 +2888,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_min_pulse_width() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_min_pulse_width -low -high 0.1 a";
     assert_eq!(
         Command::SetMinPulseWidth(SetMinPulseWidth {
@@ -2960,7 +2929,7 @@ pub struct SetMulticyclePath {
     pub path_multiplier: f64,
 }
 
-fn set_multicycle_path<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_multicycle_path<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -3088,12 +3057,11 @@ where
                 path_multiplier,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_multicycle_path() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_multicycle_path -setup -hold -rise -fall -start -end -from a -to a -through a -rise_from a -rise_to a -rise_through a -fall_from a -fall_to a -fall_through a -comment \"aaa\" 0.1";
     assert_eq!(
         Command::SetMulticyclePath(SetMulticyclePath {
@@ -3139,7 +3107,7 @@ pub struct SetOutputDelay {
     pub port_pin_list: Object,
 }
 
-fn set_output_delay<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_output_delay<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -3236,12 +3204,11 @@ where
                 port_pin_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_output_delay() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_output_delay -clock a -reference_pin a -clock_fall -level_sensitive -rise -fall -max -min -add_delay -network_latency_included -source_latency_included 0.1 a";
     assert_eq!(
         Command::SetOutputDelay(SetOutputDelay {
@@ -3271,7 +3238,7 @@ pub struct SetPropagatedClock {
     pub object_list: Object,
 }
 
-fn set_propagated_clock<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_propagated_clock<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -3297,12 +3264,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_propagated_clock() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_propagated_clock a";
     assert_eq!(
         Command::SetPropagatedClock(SetPropagatedClock {
@@ -3335,7 +3301,7 @@ impl Default for CaseValue {
     }
 }
 
-fn set_case_analysis<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_case_analysis<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -3378,12 +3344,11 @@ where
                 port_or_pin_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_case_analysis() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_case_analysis 0 a";
     assert_eq!(
         Command::SetCaseAnalysis(SetCaseAnalysis {
@@ -3431,7 +3396,7 @@ pub struct SetDrive {
     pub port_list: Object,
 }
 
-fn set_drive<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_drive<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -3485,12 +3450,11 @@ where
                 port_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_drive() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_drive -rise -fall -min -max  0.1 a";
     assert_eq!(
         Command::SetDrive(SetDrive {
@@ -3528,7 +3492,7 @@ pub struct SetDrivingCell {
     pub port_list: Object,
 }
 
-fn set_driving_cell<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_driving_cell<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -3647,12 +3611,11 @@ where
                 port_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_driving_cell() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_driving_cell -lib_cell a -rise -fall -min -max -library a -pin a -from_pin a -dont_scale -no_design_rule -clock a -clock_fall -input_transition_rise 0.1 -input_transition_fall 0.1 -multiply_by 0.1 a";
     assert_eq!(
         Command::SetDrivingCell(SetDrivingCell {
@@ -3686,7 +3649,7 @@ pub struct SetFanoutLoad {
     pub port_list: Object,
 }
 
-fn set_fanout_load<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_fanout_load<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -3713,12 +3676,11 @@ where
                 port_list.ok_or(Error::Expected(Info::Borrowed("set_fanout_load:port_list")))?;
             Ok(Command::SetFanoutLoad(SetFanoutLoad { value, port_list }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_fanout_load() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_fanout_load 0.1 a";
     assert_eq!(
         Command::SetFanoutLoad(SetFanoutLoad {
@@ -3744,7 +3706,7 @@ pub struct SetInputTransition {
     pub port_list: Object,
 }
 
-fn set_input_transition<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_input_transition<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -3812,12 +3774,11 @@ where
                 port_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_input_transition() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_input_transition -rise -fall -min -max -clock a -clock_fall 0.1 a";
     assert_eq!(
         Command::SetInputTransition(SetInputTransition {
@@ -3848,7 +3809,7 @@ pub struct SetLoad {
     pub objects: Object,
 }
 
-fn set_load<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_load<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -3905,12 +3866,11 @@ where
                 objects,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_load() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_load -min -max -subtract_pin_load -pin_load -wire_load 0.1 a";
     assert_eq!(
         Command::SetLoad(SetLoad {
@@ -3934,7 +3894,7 @@ pub struct SetLogicDc {
     pub port_list: Object,
 }
 
-fn set_logic_dc<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_logic_dc<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -3957,12 +3917,11 @@ where
                 port_list.ok_or(Error::Expected(Info::Borrowed("set_logic_dc:port_list")))?;
             Ok(Command::SetLogicDc(SetLogicDc { port_list }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_logic_dc() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_logic_dc a";
     assert_eq!(
         Command::SetLogicDc(SetLogicDc {
@@ -3980,7 +3939,7 @@ pub struct SetLogicOne {
     pub port_list: Object,
 }
 
-fn set_logic_one<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_logic_one<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4003,12 +3962,11 @@ where
                 port_list.ok_or(Error::Expected(Info::Borrowed("set_logic_one:port_list")))?;
             Ok(Command::SetLogicOne(SetLogicOne { port_list }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_logic_one() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_logic_one a";
     assert_eq!(
         Command::SetLogicOne(SetLogicOne {
@@ -4026,7 +3984,7 @@ pub struct SetLogicZero {
     pub port_list: Object,
 }
 
-fn set_logic_zero<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_logic_zero<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4049,12 +4007,11 @@ where
                 port_list.ok_or(Error::Expected(Info::Borrowed("set_logic_zero:port_list")))?;
             Ok(Command::SetLogicZero(SetLogicZero { port_list }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_logic_zero() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_logic_zero a";
     assert_eq!(
         Command::SetLogicZero(SetLogicZero {
@@ -4072,7 +4029,7 @@ pub struct SetMaxArea {
     pub area_value: f64,
 }
 
-fn set_max_area<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_max_area<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4095,12 +4052,11 @@ where
                 area_value.ok_or(Error::Expected(Info::Borrowed("set_max_area:area_value")))?;
             Ok(Command::SetMaxArea(SetMaxArea { area_value }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_max_area() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_max_area 0.1";
     assert_eq!(
         Command::SetMaxArea(SetMaxArea { area_value: 0.1 }),
@@ -4117,7 +4073,7 @@ pub struct SetMaxCapacitance {
     pub objects: Object,
 }
 
-fn set_max_capacitance<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_max_capacitance<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4149,12 +4105,11 @@ where
                 objects,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_max_capacitance() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_max_capacitance 0.1 a";
     assert_eq!(
         Command::SetMaxCapacitance(SetMaxCapacitance {
@@ -4174,7 +4129,7 @@ pub struct SetMaxFanout {
     pub objects: Object,
 }
 
-fn set_max_fanout<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_max_fanout<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4201,12 +4156,11 @@ where
                 objects.ok_or(Error::Expected(Info::Borrowed("set_max_fanout:objects")))?;
             Ok(Command::SetMaxFanout(SetMaxFanout { value, objects }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_max_fanout() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_max_fanout 0.1 a";
     assert_eq!(
         Command::SetMaxFanout(SetMaxFanout {
@@ -4230,7 +4184,7 @@ pub struct SetMaxTransition {
     pub object_list: Object,
 }
 
-fn set_max_transition<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_max_transition<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4284,12 +4238,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_max_transition() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_max_transition -clock_path -data_path -rise -fall 0.1 a";
     assert_eq!(
         Command::SetMaxTransition(SetMaxTransition {
@@ -4313,7 +4266,7 @@ pub struct SetMinCapacitance {
     pub objects: Object,
 }
 
-fn set_min_capacitance<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_min_capacitance<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4345,12 +4298,11 @@ where
                 objects,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_min_capacitance() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_min_capacitance 0.1 a";
     assert_eq!(
         Command::SetMinCapacitance(SetMinCapacitance {
@@ -4370,7 +4322,7 @@ pub struct SetMinPorosity {
     pub object_list: Object,
 }
 
-fn set_min_porosity<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_min_porosity<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4401,12 +4353,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_min_porosity() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_min_porosity 0.1 a";
     assert_eq!(
         Command::SetMinPorosity(SetMinPorosity {
@@ -4432,7 +4383,7 @@ pub struct SetOperatingConditions {
     pub condition: Option<String>,
 }
 
-fn set_operating_conditions<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_operating_conditions<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4502,12 +4453,11 @@ where
                 condition,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_operating_conditions() {
-    let mut parser = parser(set_operating_conditions);
+    let mut parser = command();
     let tgt =
         "set_operating_conditions -library a -analysis_type a -max a -min a -max_library a -min_library a -object_list a a";
     assert_eq!(
@@ -4534,7 +4484,7 @@ pub struct SetPortFanoutNumber {
     pub port_list: Object,
 }
 
-fn set_port_fanout_number<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_port_fanout_number<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4567,12 +4517,11 @@ where
                 port_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_port_fanout_number() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_port_fanout_number 0.1 a";
     assert_eq!(
         Command::SetPortFanoutNumber(SetPortFanoutNumber {
@@ -4594,7 +4543,7 @@ pub struct SetResistance {
     pub net_list: Object,
 }
 
-fn set_resistance<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_resistance<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4637,12 +4586,11 @@ where
                 net_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_resistance() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_resistance -min -max 0.1 a";
     assert_eq!(
         Command::SetResistance(SetResistance {
@@ -4676,7 +4624,7 @@ pub struct SetTimingDerate {
     pub object_list: Option<Object>,
 }
 
-fn set_timing_derate<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_timing_derate<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4769,12 +4717,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_timing_derate() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_timing_derate -cell_delay -cell_check -net_delay -data -clock -early -late -rise -fall -static -dynamic -increment 0.1 a";
     assert_eq!(
         Command::SetTimingDerate(SetTimingDerate {
@@ -4807,7 +4754,7 @@ pub struct SetVoltage {
     pub max_case_voltage: f64,
 }
 
-fn set_voltage<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_voltage<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4847,12 +4794,11 @@ where
                 max_case_voltage,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_voltage() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_voltage -min 0.1 -object_list a 0.1";
     assert_eq!(
         Command::SetVoltage(SetVoltage {
@@ -4872,7 +4818,7 @@ pub struct SetWireLoadMinBlockSize {
     pub size: f64,
 }
 
-fn set_wire_load_min_block_size<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_wire_load_min_block_size<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4898,12 +4844,11 @@ where
                 size,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_wire_load_min_block_size() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_wire_load_min_block_size 0.1";
     assert_eq!(
         Command::SetWireLoadMinBlockSize(SetWireLoadMinBlockSize { size: 0.1 }),
@@ -4919,7 +4864,7 @@ pub struct SetWireLoadMode {
     pub mode_name: String,
 }
 
-fn set_wire_load_mode<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_wire_load_mode<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -4943,12 +4888,11 @@ where
             )))?;
             Ok(Command::SetWireLoadMode(SetWireLoadMode { mode_name }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_wire_load_mode() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_wire_load_mode a";
     assert_eq!(
         Command::SetWireLoadMode(SetWireLoadMode {
@@ -4970,7 +4914,7 @@ pub struct SetWireLoadModel {
     pub object_list: Option<Object>,
 }
 
-fn set_wire_load_model<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_wire_load_model<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -5018,12 +4962,11 @@ where
                 object_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_wire_load_model() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_wire_load_model -name a -library a -min -max a";
     assert_eq!(
         Command::SetWireLoadModel(SetWireLoadModel {
@@ -5049,7 +4992,7 @@ pub struct SetWireLoadSelectionGroup {
     pub object_list: Option<Object>,
 }
 
-fn set_wire_load_selection_group<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_wire_load_selection_group<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -5101,12 +5044,11 @@ where
                 },
             ))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_wire_load_selection_group() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_wire_load_selection_group -library a -min -max a [all_clocks]";
     assert_eq!(
         Command::SetWireLoadSelectionGroup(SetWireLoadSelectionGroup {
@@ -5132,7 +5074,7 @@ pub struct CreateVoltageArea {
     pub cell_list: Object,
 }
 
-fn create_voltage_area<I>(input: &mut I) -> ParseResult<Command, I>
+fn create_voltage_area<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -5187,12 +5129,11 @@ where
                 cell_list,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_create_voltage_area() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "create_voltage_area -name a -coordinate {10 20 30 40} -guard_band_x 0.1 -guard_band_y 0.1 a";
     assert_eq!(
         Command::CreateVoltageArea(CreateVoltageArea {
@@ -5214,7 +5155,7 @@ pub struct SetLevelShifterStrategy {
     pub rule: Option<String>,
 }
 
-fn set_level_shifter_strategy<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_level_shifter_strategy<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -5237,12 +5178,11 @@ where
                 rule,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_level_shifter_strategy() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_level_shifter_strategy -rule a";
     assert_eq!(
         Command::SetLevelShifterStrategy(SetLevelShifterStrategy {
@@ -5261,7 +5201,7 @@ pub struct SetLevelShifterThreshold {
     pub percent: Option<f64>,
 }
 
-fn set_level_shifter_threshold<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_level_shifter_threshold<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -5291,12 +5231,11 @@ where
                 SetLevelShifterThreshold { voltage, percent },
             ))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_level_shifter_threshold() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_level_shifter_threshold -voltage 0.1 -percent 0.1";
     assert_eq!(
         Command::SetLevelShifterThreshold(SetLevelShifterThreshold {
@@ -5316,7 +5255,7 @@ pub struct SetMaxDynamicPower {
     pub unit: Option<String>,
 }
 
-fn set_max_dynamic_power<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_max_dynamic_power<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -5347,12 +5286,11 @@ where
                 unit,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_max_dynamic_power() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_max_dynamic_power 0.1 mW";
     assert_eq!(
         Command::SetMaxDynamicPower(SetMaxDynamicPower {
@@ -5372,7 +5310,7 @@ pub struct SetMaxLeakagePower {
     pub unit: Option<String>,
 }
 
-fn set_max_leakage_power<I>(input: &mut I) -> ParseResult<Command, I>
+fn set_max_leakage_power<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -5403,12 +5341,11 @@ where
                 unit,
             }))
         })
-        .parse_stream(input)
 }
 
 #[test]
 fn test_set_max_leakage_power() {
-    let mut parser = parser(command);
+    let mut parser = command();
     let tgt = "set_max_leakage_power 0.1 mW";
     assert_eq!(
         Command::SetMaxLeakagePower(SetMaxLeakagePower {

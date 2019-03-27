@@ -2,5 +2,6 @@
 **/*.rs.bk
 Cargo.lock
 /testcase/synopsys
-/testcase/internal
+/testcase
 /org
+/internal
