@@ -31,3 +31,21 @@ fn main() {
     assert_eq!(expect, result);
 }
 ```
+
+## Benchmark
+
+### Environment
+
+- CPU: Xeon Gold 6134 @ 3.20GHz
+- OS : CentOS Linux release 7.6.1810 (Core)
+
+### Result
+
+| Size[KB] | Time[ms] | Throughput[MBps] |
+| -------- | -------- | ---------------- |
+| 5617     | 470      | 12.22            |
+| 11529    | 965      | 12.23            |
+| 54059    | 2738     | 20.21            |
+| 114528   | 9157     | 12.81            |
+| 496898   | 30887    | 16.47            |
+
