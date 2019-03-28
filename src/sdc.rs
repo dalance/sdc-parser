@@ -1,11 +1,18 @@
 use crate::object::*;
 use crate::util::*;
 use combine::char::{char, space, string};
-use combine::easy::{Error, Info};
-use combine::error::ParseError;
+use combine::error::{ParseError, StreamError};
 use combine::parser::Parser;
-use combine::{attempt, choice, look_ahead, many, many1, none_of, optional, parser, token, Stream};
+use combine::{
+    attempt, choice, look_ahead, many, many1, none_of, optional, parser, token, Stream, StreamOnce,
+};
 use std::fmt;
+
+type AndThenError<I> = <<I as StreamOnce>::Error as ParseError<
+    <I as StreamOnce>::Item,
+    <I as StreamOnce>::Range,
+    <I as StreamOnce>::Position,
+>>::StreamError;
 
 // -----------------------------------------------------------------------------
 
@@ -268,8 +275,7 @@ enum CommandArg {
 pub(crate) fn sdc<I>() -> impl Parser<Input = I, Output = Sdc>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     many1(command()).map(|x| Sdc { commands: x })
 }
@@ -277,8 +283,7 @@ where
 pub(crate) fn sdc_strict<I>() -> impl Parser<Input = I, Output = Sdc>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     many1(command_strict()).map(|x| Sdc { commands: x })
 }
@@ -286,8 +291,7 @@ where
 fn command<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     choice((attempt(command_strict()), unknown()))
 }
@@ -295,8 +299,7 @@ where
 fn command_strict<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let c = (
         attempt(create_clock()),
@@ -408,8 +411,7 @@ where
 fn linebreak<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = lex(string("\n").or(string("\r\n"))).map(|_| Command::LineBreak);
     command
@@ -420,8 +422,7 @@ where
 fn comment<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = token('#')
         .and(many(none_of("\n".chars())))
@@ -476,8 +477,7 @@ impl fmt::Display for CreateClock {
 fn create_clock<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("create_clock");
     let period = symbol("-period")
@@ -502,7 +502,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut period = None;
             let mut name = None;
             let mut waveform = vec![];
@@ -520,7 +520,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let period = period.ok_or(Error::Expected(Info::Borrowed("create_clock:period")))?;
+            let period = period.ok_or(AndThenError::<I>::message_static_message(
+                "create_clock:period",
+            ))?;
             Ok(Command::CreateClock(CreateClock {
                 period,
                 name,
@@ -536,7 +538,7 @@ where
 fn test_create_clock() {
     let mut parser = command();
     let tgt = "create_clock -period 10 -name clk -waveform {0 5} -add -comment \"aaa\" source";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::CreateClock(CreateClock {
             period: 10.0,
@@ -634,8 +636,7 @@ impl fmt::Display for CreateGeneratedClock {
 fn create_generated_clock<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("create_generated_clock");
     let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
@@ -684,7 +685,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut name = None;
             let mut source = None;
             let mut edges = vec![];
@@ -716,12 +717,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let source = source.ok_or(Error::Expected(Info::Borrowed(
+            let source = source.ok_or(AndThenError::<I>::message_static_message(
                 "create_generated_clock:source",
-            )))?;
-            let source_objects = source_objects.ok_or(Error::Expected(Info::Borrowed(
-                "create_generated_clock:source_objects",
-            )))?;
+            ))?;
+            let source_objects = source_objects.ok_or(
+                AndThenError::<I>::message_static_message("create_generated_clock:source_objects"),
+            )?;
             Ok(Command::CreateGeneratedClock(CreateGeneratedClock {
                 name,
                 source,
@@ -744,7 +745,7 @@ where
 fn test_create_generated_clock() {
     let mut parser = command();
     let tgt = "create_generated_clock -name clk -source src -edges {0 0.5} -divide_by 3 -multiply_by 2 -duty_cycle 0.4 -invert -edge_shift {0 1} -add -master_clock mclk -combinational -comment \"aaa\" clk";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::CreateGeneratedClock(CreateGeneratedClock {
             name: Some(String::from("clk")),
@@ -813,8 +814,7 @@ impl fmt::Display for CreateVoltageArea {
 fn create_voltage_area<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("create_voltage_area");
     let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
@@ -837,7 +837,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut name = None;
             let mut coordinate = Vec::new();
             let mut guard_band_x = None;
@@ -853,10 +853,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let name = name.ok_or(Error::Expected(Info::Borrowed("create_voltage_area:name")))?;
-            let cell_list = cell_list.ok_or(Error::Expected(Info::Borrowed(
+            let name = name.ok_or(AndThenError::<I>::message_static_message(
+                "create_voltage_area:name",
+            ))?;
+            let cell_list = cell_list.ok_or(AndThenError::<I>::message_static_message(
                 "create_voltage_area:cell_list",
-            )))?;
+            ))?;
             Ok(Command::CreateVoltageArea(CreateVoltageArea {
                 name,
                 coordinate,
@@ -871,7 +873,7 @@ where
 fn test_create_voltage_area() {
     let mut parser = command();
     let tgt = "create_voltage_area -name a -coordinate {10 20 30 40} -guard_band_x 0.1 -guard_band_y 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::CreateVoltageArea(CreateVoltageArea {
             name: String::from("a"),
@@ -908,15 +910,14 @@ impl fmt::Display for CurrentInstance {
 fn current_instance<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("current_instance");
     let instance = item().map(|x| CommandArg::String(x));
     let args = (attempt(instance),);
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut instance = None;
             for x in xs {
                 match x {
@@ -932,7 +933,7 @@ where
 fn test_current_instance() {
     let mut parser = command();
     let tgt = "current_instance dut";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::CurrentInstance(CurrentInstance {
             instance: Some(String::from("dut")),
@@ -1011,8 +1012,7 @@ impl fmt::Display for GroupPath {
 fn group_path<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("group_path");
     let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
@@ -1067,7 +1067,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut name = None;
             let mut default = false;
             let mut weight = None;
@@ -1121,7 +1121,7 @@ where
 fn test_group_path() {
     let mut parser = command();
     let tgt = "group_path -name path -default -weight 2 -from a -rise_from a -fall_from a -to b -rise_to b -fall_to b -through c -rise_through c -fall_through c -comment \"aaa\"";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::GroupPath(GroupPath {
             name: Some(String::from("path")),
@@ -1182,8 +1182,7 @@ impl fmt::Display for Set {
 fn set<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set")
         .with(item())
@@ -1201,7 +1200,7 @@ where
 fn test_set() {
     let mut parser = command();
     let tgt = "set a b";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::Set(Set {
             variable_name: String::from("a"),
@@ -1260,8 +1259,7 @@ impl fmt::Display for CaseValue {
 fn set_case_analysis<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_case_analysis");
     let value = choice((
@@ -1281,7 +1279,7 @@ where
     let args = (attempt(value), attempt(port_or_pin_list));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut port_or_pin_list = None;
             for x in xs {
@@ -1291,10 +1289,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.ok_or(Error::Expected(Info::Borrowed("set_case_analysis:value")))?;
-            let port_or_pin_list = port_or_pin_list.ok_or(Error::Expected(Info::Borrowed(
-                "set_case_analysis:port_or_pin_list",
-            )))?;
+            let value = value.ok_or(AndThenError::<I>::message_static_message(
+                "set_case_analysis:value",
+            ))?;
+            let port_or_pin_list = port_or_pin_list.ok_or(
+                AndThenError::<I>::message_static_message("set_case_analysis:port_or_pin_list"),
+            )?;
             Ok(Command::SetCaseAnalysis(SetCaseAnalysis {
                 value,
                 port_or_pin_list,
@@ -1306,7 +1306,7 @@ where
 fn test_set_case_analysis() {
     let mut parser = command();
     let tgt = "set_case_analysis 0 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetCaseAnalysis(SetCaseAnalysis {
             value: CaseValue::Zero,
@@ -1317,7 +1317,7 @@ fn test_set_case_analysis() {
         ret
     );
     let tgt = "set_case_analysis 1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetCaseAnalysis(SetCaseAnalysis {
             value: CaseValue::One,
@@ -1328,7 +1328,7 @@ fn test_set_case_analysis() {
         ret
     );
     let tgt = "set_case_analysis rising a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetCaseAnalysis(SetCaseAnalysis {
             value: CaseValue::Rising,
@@ -1339,7 +1339,7 @@ fn test_set_case_analysis() {
         ret
     );
     let tgt = "set_case_analysis falling a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetCaseAnalysis(SetCaseAnalysis {
             value: CaseValue::Falling,
@@ -1397,8 +1397,7 @@ impl fmt::Display for SetClockGatingCheck {
 fn set_clock_gating_check<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_clock_gating_check");
     let setup = symbol("-setup")
@@ -1423,7 +1422,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut setup = None;
             let mut hold = None;
             let mut rise = false;
@@ -1459,7 +1458,7 @@ where
 fn test_set_clock_gating_check() {
     let mut parser = command();
     let tgt = "set_clock_gating_check -setup 1.2 -hold 0.5 -rise -fall -high -low a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetClockGatingCheck(SetClockGatingCheck {
             setup: Some(1.2),
@@ -1520,8 +1519,7 @@ impl fmt::Display for SetClockGroups {
 fn set_clock_groups<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = attempt(symbol("set_clock_groups")).or(symbol("set_clock_groups"));
     let group = symbol("-group")
@@ -1548,7 +1546,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut group = None;
             let mut logically_exclusive = false;
             let mut physically_exclusive = false;
@@ -1568,7 +1566,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let group = group.ok_or(Error::Expected(Info::Borrowed("set_clock_groups:group")))?;
+            let group = group.ok_or(AndThenError::<I>::message_static_message(
+                "set_clock_groups:group",
+            ))?;
             Ok(Command::SetClockGroups(SetClockGroups {
                 group,
                 logically_exclusive,
@@ -1585,7 +1585,7 @@ where
 fn test_set_clock_groups() {
     let mut parser = command();
     let tgt = "set_clock_groups -group clk -logically_exclusive -physically_exclusive -asynchronous -allow_paths -name clk -comment \"aaa\"";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetClockGroups(SetClockGroups {
             group: Object::String(ObjectString {
@@ -1660,8 +1660,7 @@ impl fmt::Display for SetClockLatency {
 fn set_clock_latency<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_clock_latency");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -1692,7 +1691,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -1720,10 +1719,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay = delay.ok_or(Error::Expected(Info::Borrowed("set_clock_latency:delay")))?;
-            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+            let delay = delay.ok_or(AndThenError::<I>::message_static_message(
+                "set_clock_latency:delay",
+            ))?;
+            let object_list = object_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_clock_latency:object_list",
-            )))?;
+            ))?;
             Ok(Command::SetClockLatency(SetClockLatency {
                 rise,
                 fall,
@@ -1745,7 +1746,7 @@ fn test_set_clock_latency() {
     let mut parser = command();
     let tgt =
         "set_clock_latency -rise -fall -min -max -source -dynamic -late -early -clock clk 0.12 obj";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetClockLatency(SetClockLatency {
             rise: true,
@@ -1808,8 +1809,7 @@ impl fmt::Display for SetClockSense {
 fn set_clock_sense<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_clock_sense");
     let positive = symbol("-positive").map(|_| CommandArg::Positive);
@@ -1830,7 +1830,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut positive = false;
             let mut negative = false;
             let mut stop_propagation = false;
@@ -1848,9 +1848,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let pin_list = pin_list.ok_or(Error::Expected(Info::Borrowed(
+            let pin_list = pin_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_clock_sense:pin_list is required",
-            )))?;
+            ))?;
             Ok(Command::SetClockSense(SetClockSense {
                 positive,
                 negative,
@@ -1866,7 +1866,7 @@ where
 fn test_set_clock_sense() {
     let mut parser = command();
     let tgt = "set_clock_sense -positive -negative -stop_propagation -pulse a -clocks clk pin";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetClockSense(SetClockSense {
             positive: true,
@@ -1922,8 +1922,7 @@ impl fmt::Display for SetClockTransition {
 fn set_clock_transition<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_clock_transition");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -1942,7 +1941,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -1960,12 +1959,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let transition = transition.ok_or(Error::Expected(Info::Borrowed(
+            let transition = transition.ok_or(AndThenError::<I>::message_static_message(
                 "set_clock_transition:transition",
-            )))?;
-            let clock_list = clock_list.ok_or(Error::Expected(Info::Borrowed(
+            ))?;
+            let clock_list = clock_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_clock_transition:clock_list",
-            )))?;
+            ))?;
             Ok(Command::SetClockTransition(SetClockTransition {
                 rise,
                 fall,
@@ -1981,7 +1980,7 @@ where
 fn test_set_clock_transition() {
     let mut parser = command();
     let tgt = "set_clock_transition -rise -fall -min -max 0.012 clk";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetClockTransition(SetClockTransition {
             rise: true,
@@ -2061,8 +2060,7 @@ impl fmt::Display for SetClockUncertainty {
 fn set_clock_uncertainty<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_clock_uncertainty");
     let from = symbol("-from")
@@ -2105,7 +2103,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut from = None;
             let mut rise_from = None;
             let mut fall_from = None;
@@ -2135,9 +2133,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let uncertainty = uncertainty.ok_or(Error::Expected(Info::Borrowed(
+            let uncertainty = uncertainty.ok_or(AndThenError::<I>::message_static_message(
                 "set_clock_uncertainty:uncertainty",
-            )))?;
+            ))?;
             Ok(Command::SetClockUncertainty(SetClockUncertainty {
                 from,
                 rise_from,
@@ -2159,7 +2157,7 @@ where
 fn test_set_clock_uncertainty() {
     let mut parser = command();
     let tgt = "set_clock_uncertainty -from a -rise_from a -fall_from a -to a -rise_to a -fall_to a -rise -fall -setup -hold 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetClockUncertainty(SetClockUncertainty {
             from: Some(Object::String(ObjectString {
@@ -2249,8 +2247,7 @@ impl fmt::Display for SetDataCheck {
 fn set_data_check<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_data_check");
     let from = symbol("-from")
@@ -2291,7 +2288,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut from = None;
             let mut to = None;
             let mut rise_from = None;
@@ -2317,7 +2314,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.ok_or(Error::Expected(Info::Borrowed("set_data_check:value")))?;
+            let value = value.ok_or(AndThenError::<I>::message_static_message(
+                "set_data_check:value",
+            ))?;
             Ok(Command::SetDataCheck(SetDataCheck {
                 from,
                 to,
@@ -2337,7 +2336,7 @@ where
 fn test_set_data_check() {
     let mut parser = command();
     let tgt = "set_data_check -from a -to a -rise_from a -fall_from a -rise_to a -fall_to a -setup -hold -clock a 0.1";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetDataCheck(SetDataCheck {
             from: Some(Object::String(ObjectString {
@@ -2397,8 +2396,7 @@ impl fmt::Display for SetDisableTiming {
 fn set_disable_timing<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_disable_timing");
     let from = symbol("-from")
@@ -2411,7 +2409,7 @@ where
     let args = (attempt(from), attempt(to), attempt(cell_pin_list));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut from = None;
             let mut to = None;
             let mut cell_pin_list = None;
@@ -2423,9 +2421,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let cell_pin_list = cell_pin_list.ok_or(Error::Expected(Info::Borrowed(
+            let cell_pin_list = cell_pin_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_disable_timing:cell_pin_list",
-            )))?;
+            ))?;
             Ok(Command::SetDisableTiming(SetDisableTiming {
                 from,
                 to,
@@ -2438,7 +2436,7 @@ where
 fn test_set_disable_timing() {
     let mut parser = command();
     let tgt = "set_disable_timing -from a -to a a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetDisableTiming(SetDisableTiming {
             from: Some(Object::String(ObjectString {
@@ -2493,8 +2491,7 @@ impl fmt::Display for SetDrive {
 fn set_drive<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_drive");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -2513,7 +2510,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -2531,10 +2528,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let resistance =
-                resistance.ok_or(Error::Expected(Info::Borrowed("set_drive:resistance")))?;
-            let port_list =
-                port_list.ok_or(Error::Expected(Info::Borrowed("set_drive:port_list")))?;
+            let resistance = resistance.ok_or(AndThenError::<I>::message_static_message(
+                "set_drive:resistance",
+            ))?;
+            let port_list = port_list.ok_or(AndThenError::<I>::message_static_message(
+                "set_drive:port_list",
+            ))?;
             Ok(Command::SetDrive(SetDrive {
                 rise,
                 fall,
@@ -2550,7 +2549,7 @@ where
 fn test_set_drive() {
     let mut parser = command();
     let tgt = "set_drive -rise -fall -min -max 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetDrive(SetDrive {
             rise: true,
@@ -2652,8 +2651,7 @@ impl fmt::Display for SetDrivingCell {
 fn set_driving_cell<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_driving_cell");
     let lib_cell = symbol("-lib_cell")
@@ -2708,7 +2706,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut lib_cell = None;
             let mut rise = false;
             let mut fall = false;
@@ -2746,9 +2744,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let port_list = port_list.ok_or(Error::Expected(Info::Borrowed(
+            let port_list = port_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_driving_cell:port_list",
-            )))?;
+            ))?;
             Ok(Command::SetDrivingCell(SetDrivingCell {
                 lib_cell,
                 rise,
@@ -2774,7 +2772,7 @@ where
 fn test_set_driving_cell() {
     let mut parser = command();
     let tgt = "set_driving_cell -lib_cell a -rise -fall -min -max -library a -pin a -from_pin a -dont_scale -no_design_rule -clock a -clock_fall -input_transition_rise 0.1 -input_transition_fall 0.1 -multiply_by 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetDrivingCell(SetDrivingCell {
             lib_cell: Some(Object::String(ObjectString {
@@ -2884,8 +2882,7 @@ impl fmt::Display for SetFalsePath {
 fn set_false_path<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_false_path");
     let setup = symbol("-setup").map(|_| CommandArg::Setup);
@@ -2940,7 +2937,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut setup = false;
             let mut hold = false;
             let mut rise = false;
@@ -2997,7 +2994,7 @@ where
 fn test_set_false_path() {
     let mut parser = command();
     let tgt = "set_false_path -setup -hold -rise -fall -from a -to a -through a -rise_from a -rise_to a -rise_through a -fall_from a -fall_to a -fall_through a -comment \"aaa\"";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetFalsePath(SetFalsePath {
             setup: true,
@@ -3059,8 +3056,7 @@ impl fmt::Display for SetFanoutLoad {
 fn set_fanout_load<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_fanout_load");
     let value = float().map(|x| CommandArg::Value(x));
@@ -3068,7 +3064,7 @@ where
     let args = (attempt(value), attempt(port_list));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut port_list = None;
             for x in xs {
@@ -3078,9 +3074,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.ok_or(Error::Expected(Info::Borrowed("set_fanout_load:value")))?;
-            let port_list =
-                port_list.ok_or(Error::Expected(Info::Borrowed("set_fanout_load:port_list")))?;
+            let value = value.ok_or(AndThenError::<I>::message_static_message(
+                "set_fanout_load:value",
+            ))?;
+            let port_list = port_list.ok_or(AndThenError::<I>::message_static_message(
+                "set_fanout_load:port_list",
+            ))?;
             Ok(Command::SetFanoutLoad(SetFanoutLoad { value, port_list }))
         })
 }
@@ -3089,7 +3088,7 @@ where
 fn test_set_fanout_load() {
     let mut parser = command();
     let tgt = "set_fanout_load 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetFanoutLoad(SetFanoutLoad {
             value: 0.1,
@@ -3139,8 +3138,7 @@ impl fmt::Display for SetIdealLatency {
 fn set_ideal_latency<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_ideal_latency");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -3159,7 +3157,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -3177,10 +3175,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay = delay.ok_or(Error::Expected(Info::Borrowed("set_ideal_latency:delay")))?;
-            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+            let delay = delay.ok_or(AndThenError::<I>::message_static_message(
+                "set_ideal_latency:delay",
+            ))?;
+            let object_list = object_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_ideal_latency:object_list",
-            )))?;
+            ))?;
             Ok(Command::SetIdealLatency(SetIdealLatency {
                 rise,
                 fall,
@@ -3196,7 +3196,7 @@ where
 fn test_set_ideal_latency() {
     let mut parser = command();
     let tgt = "set_ideal_latency -rise -fall -min -max 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetIdealLatency(SetIdealLatency {
             rise: true,
@@ -3236,8 +3236,7 @@ impl fmt::Display for SetIdealNetwork {
 fn set_ideal_network<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_ideal_network");
     let no_propagate = symbol("-no_propagate").map(|_| CommandArg::NoPropagate);
@@ -3245,7 +3244,7 @@ where
     let args = (attempt(no_propagate), attempt(object_list));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut no_propagate = false;
             let mut object_list = None;
             for x in xs {
@@ -3255,9 +3254,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+            let object_list = object_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_ideal_network:object_list",
-            )))?;
+            ))?;
             Ok(Command::SetIdealNetwork(SetIdealNetwork {
                 no_propagate,
                 object_list,
@@ -3269,7 +3268,7 @@ where
 fn test_set_ideal_network() {
     let mut parser = command();
     let tgt = "set_ideal_network -no_propagate a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetIdealNetwork(SetIdealNetwork {
             no_propagate: true,
@@ -3319,8 +3318,7 @@ impl fmt::Display for SetIdealTransition {
 fn set_ideal_transition<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_ideal_transition");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -3339,7 +3337,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -3357,12 +3355,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let transition_time = transition_time.ok_or(Error::Expected(Info::Borrowed(
-                "set_ideal_transition:transition_time",
-            )))?;
-            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+            let transition_time = transition_time.ok_or(
+                AndThenError::<I>::message_static_message("set_ideal_transition:transition_time"),
+            )?;
+            let object_list = object_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_ideal_transition:object_list",
-            )))?;
+            ))?;
             Ok(Command::SetIdealTransition(SetIdealTransition {
                 rise,
                 fall,
@@ -3378,7 +3376,7 @@ where
 fn test_set_ideal_transition() {
     let mut parser = command();
     let tgt = "set_ideal_transition -rise -fall -min -max 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetIdealTransition(SetIdealTransition {
             rise: true,
@@ -3460,8 +3458,7 @@ impl fmt::Display for SetInputDelay {
 fn set_input_delay<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_input_delay");
     let clock = symbol("-clock")
@@ -3500,7 +3497,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut clock = None;
             let mut reference_pin = None;
             let mut clock_fall = false;
@@ -3532,12 +3529,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.ok_or(Error::Expected(Info::Borrowed(
+            let delay_value = delay_value.ok_or(AndThenError::<I>::message_static_message(
                 "set_input_delay:delay_value",
-            )))?;
-            let port_pin_list = port_pin_list.ok_or(Error::Expected(Info::Borrowed(
+            ))?;
+            let port_pin_list = port_pin_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_input_delay:port_pin_list",
-            )))?;
+            ))?;
             Ok(Command::SetInputDelay(SetInputDelay {
                 clock,
                 reference_pin,
@@ -3560,7 +3557,7 @@ where
 fn test_set_input_delay() {
     let mut parser = command();
     let tgt = "set_input_delay -clock a -reference_pin a -clock_fall -level_sensitive -rise -fall -max -min -add_delay -network_latency_included -source_latency_included 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetInputDelay(SetInputDelay {
             clock: Some(Object::String(ObjectString {
@@ -3633,8 +3630,7 @@ impl fmt::Display for SetInputTransition {
 fn set_input_transition<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_input_transition");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -3659,7 +3655,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut min = false;
@@ -3681,12 +3677,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let transition = transition.ok_or(Error::Expected(Info::Borrowed(
+            let transition = transition.ok_or(AndThenError::<I>::message_static_message(
                 "set_input_transition:transition",
-            )))?;
-            let port_list = port_list.ok_or(Error::Expected(Info::Borrowed(
+            ))?;
+            let port_list = port_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_input_transition:port_list",
-            )))?;
+            ))?;
             Ok(Command::SetInputTransition(SetInputTransition {
                 rise,
                 fall,
@@ -3704,7 +3700,7 @@ where
 fn test_set_input_transition() {
     let mut parser = command();
     let tgt = "set_input_transition -rise -fall -min -max -clock a -clock_fall 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetInputTransition(SetInputTransition {
             rise: true,
@@ -3746,15 +3742,14 @@ impl fmt::Display for SetLevelShifterStrategy {
 fn set_level_shifter_strategy<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_level_shifter_strategy");
     let rule = symbol("-rule").with(item()).map(|x| CommandArg::Rule(x));
     let args = (attempt(rule),);
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut rule = None;
             for x in xs {
                 match x {
@@ -3772,7 +3767,7 @@ where
 fn test_set_level_shifter_strategy() {
     let mut parser = command();
     let tgt = "set_level_shifter_strategy -rule a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetLevelShifterStrategy(SetLevelShifterStrategy {
             rule: Some(String::from("a")),
@@ -3807,8 +3802,7 @@ impl fmt::Display for SetLevelShifterThreshold {
 fn set_level_shifter_threshold<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_level_shifter_threshold");
     let voltage = symbol("-voltage")
@@ -3820,7 +3814,7 @@ where
     let args = (attempt(voltage), attempt(percent));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut voltage = None;
             let mut percent = None;
             for x in xs {
@@ -3840,7 +3834,7 @@ where
 fn test_set_level_shifter_threshold() {
     let mut parser = command();
     let tgt = "set_level_shifter_threshold -voltage 0.1 -percent 0.1";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetLevelShifterThreshold(SetLevelShifterThreshold {
             voltage: Some(0.1),
@@ -3892,8 +3886,7 @@ impl fmt::Display for SetLoad {
 fn set_load<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_load");
     let min = symbol("-min").map(|_| CommandArg::Min);
@@ -3914,7 +3907,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut min = false;
             let mut max = false;
             let mut subtract_pin_load = false;
@@ -3934,8 +3927,10 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.ok_or(Error::Expected(Info::Borrowed("set_load:value")))?;
-            let objects = objects.ok_or(Error::Expected(Info::Borrowed("set_load:objects")))?;
+            let value = value.ok_or(AndThenError::<I>::message_static_message("set_load:value"))?;
+            let objects = objects.ok_or(AndThenError::<I>::message_static_message(
+                "set_load:objects",
+            ))?;
             Ok(Command::SetLoad(SetLoad {
                 min,
                 max,
@@ -3952,7 +3947,7 @@ where
 fn test_set_load() {
     let mut parser = command();
     let tgt = "set_load -min -max -subtract_pin_load -pin_load -wire_load 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetLoad(SetLoad {
             min: true,
@@ -3989,15 +3984,14 @@ impl fmt::Display for SetLogicDc {
 fn set_logic_dc<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_logic_dc");
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(port_list),);
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut port_list = None;
             for x in xs {
                 match x {
@@ -4005,8 +3999,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let port_list =
-                port_list.ok_or(Error::Expected(Info::Borrowed("set_logic_dc:port_list")))?;
+            let port_list = port_list.ok_or(AndThenError::<I>::message_static_message(
+                "set_logic_dc:port_list",
+            ))?;
             Ok(Command::SetLogicDc(SetLogicDc { port_list }))
         })
 }
@@ -4015,7 +4010,7 @@ where
 fn test_set_logic_dc() {
     let mut parser = command();
     let tgt = "set_logic_dc a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetLogicDc(SetLogicDc {
             port_list: Object::String(ObjectString {
@@ -4046,15 +4041,14 @@ impl fmt::Display for SetLogicOne {
 fn set_logic_one<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_logic_one");
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(port_list),);
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut port_list = None;
             for x in xs {
                 match x {
@@ -4062,8 +4056,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let port_list =
-                port_list.ok_or(Error::Expected(Info::Borrowed("set_logic_one:port_list")))?;
+            let port_list = port_list.ok_or(AndThenError::<I>::message_static_message(
+                "set_logic_one:port_list",
+            ))?;
             Ok(Command::SetLogicOne(SetLogicOne { port_list }))
         })
 }
@@ -4072,7 +4067,7 @@ where
 fn test_set_logic_one() {
     let mut parser = command();
     let tgt = "set_logic_one a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetLogicOne(SetLogicOne {
             port_list: Object::String(ObjectString {
@@ -4103,15 +4098,14 @@ impl fmt::Display for SetLogicZero {
 fn set_logic_zero<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_logic_zero");
     let port_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(port_list),);
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut port_list = None;
             for x in xs {
                 match x {
@@ -4119,8 +4113,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let port_list =
-                port_list.ok_or(Error::Expected(Info::Borrowed("set_logic_zero:port_list")))?;
+            let port_list = port_list.ok_or(AndThenError::<I>::message_static_message(
+                "set_logic_zero:port_list",
+            ))?;
             Ok(Command::SetLogicZero(SetLogicZero { port_list }))
         })
 }
@@ -4129,7 +4124,7 @@ where
 fn test_set_logic_zero() {
     let mut parser = command();
     let tgt = "set_logic_zero a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetLogicZero(SetLogicZero {
             port_list: Object::String(ObjectString {
@@ -4160,15 +4155,14 @@ impl fmt::Display for SetMaxArea {
 fn set_max_area<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_max_area");
     let area_value = float().map(|x| CommandArg::Value(x));
     let args = (attempt(area_value),);
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut area_value = None;
             for x in xs {
                 match x {
@@ -4176,8 +4170,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let area_value =
-                area_value.ok_or(Error::Expected(Info::Borrowed("set_max_area:area_value")))?;
+            let area_value = area_value.ok_or(AndThenError::<I>::message_static_message(
+                "set_max_area:area_value",
+            ))?;
             Ok(Command::SetMaxArea(SetMaxArea { area_value }))
         })
 }
@@ -4186,7 +4181,7 @@ where
 fn test_set_max_area() {
     let mut parser = command();
     let tgt = "set_max_area 0.1";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(Command::SetMaxArea(SetMaxArea { area_value: 0.1 }), ret);
     assert_eq!(tgt, format!("{}", ret));
 }
@@ -4212,8 +4207,7 @@ impl fmt::Display for SetMaxCapacitance {
 fn set_max_capacitance<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_max_capacitance");
     let value = float().map(|x| CommandArg::Value(x));
@@ -4221,7 +4215,7 @@ where
     let args = (attempt(value), attempt(objects));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut objects = None;
             for x in xs {
@@ -4231,11 +4225,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value =
-                value.ok_or(Error::Expected(Info::Borrowed("set_max_capacitance:value")))?;
-            let objects = objects.ok_or(Error::Expected(Info::Borrowed(
+            let value = value.ok_or(AndThenError::<I>::message_static_message(
+                "set_max_capacitance:value",
+            ))?;
+            let objects = objects.ok_or(AndThenError::<I>::message_static_message(
                 "set_max_capacitance:objects",
-            )))?;
+            ))?;
             Ok(Command::SetMaxCapacitance(SetMaxCapacitance {
                 value,
                 objects,
@@ -4247,7 +4242,7 @@ where
 fn test_set_max_capacitance() {
     let mut parser = command();
     let tgt = "set_max_capacitance 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMaxCapacitance(SetMaxCapacitance {
             value: 0.1,
@@ -4331,8 +4326,7 @@ impl fmt::Display for SetMaxDelay {
 fn set_max_delay<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_max_delay");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -4388,7 +4382,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut from = None;
@@ -4422,8 +4416,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value =
-                delay_value.ok_or(Error::Expected(Info::Borrowed("set_max_delay:delay_value")))?;
+            let delay_value = delay_value.ok_or(AndThenError::<I>::message_static_message(
+                "set_max_delay:delay_value",
+            ))?;
             Ok(Command::SetMaxDelay(SetMaxDelay {
                 rise,
                 fall,
@@ -4447,7 +4442,7 @@ where
 fn test_set_max_delay() {
     let mut parser = command();
     let tgt = "set_max_delay -rise -fall -from a -to a -through a -rise_from a -rise_to a -rise_through a -fall_from a -fall_to a -fall_through a -ignore_clock_latency -comment \"aaa\" 0.1";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMaxDelay(SetMaxDelay {
             rise: true,
@@ -4511,8 +4506,7 @@ impl fmt::Display for SetMaxDynamicPower {
 fn set_max_dynamic_power<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_max_dynamic_power");
@@ -4521,7 +4515,7 @@ where
     let args = (attempt(power), attempt(unit));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut power = None;
             let mut unit = None;
             for x in xs {
@@ -4531,9 +4525,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let power = power.ok_or(Error::Expected(Info::Borrowed(
+            let power = power.ok_or(AndThenError::<I>::message_static_message(
                 "set_max_dynamic_power:power",
-            )))?;
+            ))?;
             Ok(Command::SetMaxDynamicPower(SetMaxDynamicPower {
                 power,
                 unit,
@@ -4545,7 +4539,7 @@ where
 fn test_set_max_dynamic_power() {
     let mut parser = command();
     let tgt = "set_max_dynamic_power 0.1 mW";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMaxDynamicPower(SetMaxDynamicPower {
             power: 0.1,
@@ -4577,8 +4571,7 @@ impl fmt::Display for SetMaxFanout {
 fn set_max_fanout<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_max_fanout");
     let value = float().map(|x| CommandArg::Value(x));
@@ -4586,7 +4579,7 @@ where
     let args = (attempt(value), attempt(objects));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut objects = None;
             for x in xs {
@@ -4596,9 +4589,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.ok_or(Error::Expected(Info::Borrowed("set_max_fanout:value")))?;
-            let objects =
-                objects.ok_or(Error::Expected(Info::Borrowed("set_max_fanout:objects")))?;
+            let value = value.ok_or(AndThenError::<I>::message_static_message(
+                "set_max_fanout:value",
+            ))?;
+            let objects = objects.ok_or(AndThenError::<I>::message_static_message(
+                "set_max_fanout:objects",
+            ))?;
             Ok(Command::SetMaxFanout(SetMaxFanout { value, objects }))
         })
 }
@@ -4607,7 +4603,7 @@ where
 fn test_set_max_fanout() {
     let mut parser = command();
     let tgt = "set_max_fanout 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMaxFanout(SetMaxFanout {
             value: 0.1,
@@ -4643,8 +4639,7 @@ impl fmt::Display for SetMaxLeakagePower {
 fn set_max_leakage_power<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_max_leakage_power");
@@ -4653,7 +4648,7 @@ where
     let args = (attempt(power), attempt(unit));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut power = None;
             let mut unit = None;
             for x in xs {
@@ -4663,9 +4658,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let power = power.ok_or(Error::Expected(Info::Borrowed(
+            let power = power.ok_or(AndThenError::<I>::message_static_message(
                 "set_max_leakage_power:power",
-            )))?;
+            ))?;
             Ok(Command::SetMaxLeakagePower(SetMaxLeakagePower {
                 power,
                 unit,
@@ -4677,7 +4672,7 @@ where
 fn test_set_max_leakage_power() {
     let mut parser = command();
     let tgt = "set_max_leakage_power 0.1 mW";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMaxLeakagePower(SetMaxLeakagePower {
             power: 0.1,
@@ -4709,8 +4704,7 @@ impl fmt::Display for SetMaxTimeBorrow {
 fn set_max_time_borrow<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_max_time_borrow");
     let delay_value = float().map(|x| CommandArg::Value(x));
@@ -4718,7 +4712,7 @@ where
     let args = (attempt(delay_value), attempt(object_list));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut delay_value = None;
             let mut object_list = None;
             for x in xs {
@@ -4728,12 +4722,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.ok_or(Error::Expected(Info::Borrowed(
+            let delay_value = delay_value.ok_or(AndThenError::<I>::message_static_message(
                 "set_max_time_borrow:delay_value",
-            )))?;
-            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+            ))?;
+            let object_list = object_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_max_time_borrow:object_list",
-            )))?;
+            ))?;
             Ok(Command::SetMaxTimeBorrow(SetMaxTimeBorrow {
                 delay_value,
                 object_list,
@@ -4745,7 +4739,7 @@ where
 fn test_set_max_time_borrow() {
     let mut parser = command();
     let tgt = "set_max_time_borrow 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMaxTimeBorrow(SetMaxTimeBorrow {
             delay_value: 0.1,
@@ -4795,8 +4789,7 @@ impl fmt::Display for SetMaxTransition {
 fn set_max_transition<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_max_transition");
     let clock_path = symbol("-clock_path").map(|_| CommandArg::ClockPath);
@@ -4815,7 +4808,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut clock_path = false;
             let mut data_path = false;
             let mut rise = false;
@@ -4833,10 +4826,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.ok_or(Error::Expected(Info::Borrowed("set_max_transition:value")))?;
-            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+            let value = value.ok_or(AndThenError::<I>::message_static_message(
+                "set_max_transition:value",
+            ))?;
+            let object_list = object_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_max_transition:object_list",
-            )))?;
+            ))?;
             Ok(Command::SetMaxTransition(SetMaxTransition {
                 clock_path,
                 data_path,
@@ -4852,7 +4847,7 @@ where
 fn test_set_max_transition() {
     let mut parser = command();
     let tgt = "set_max_transition -clock_path -data_path -rise -fall 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMaxTransition(SetMaxTransition {
             clock_path: true,
@@ -4890,8 +4885,7 @@ impl fmt::Display for SetMinCapacitance {
 fn set_min_capacitance<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_min_capacitance");
     let value = float().map(|x| CommandArg::Value(x));
@@ -4899,7 +4893,7 @@ where
     let args = (attempt(value), attempt(objects));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut objects = None;
             for x in xs {
@@ -4909,11 +4903,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value =
-                value.ok_or(Error::Expected(Info::Borrowed("set_min_capacitance:value")))?;
-            let objects = objects.ok_or(Error::Expected(Info::Borrowed(
+            let value = value.ok_or(AndThenError::<I>::message_static_message(
+                "set_min_capacitance:value",
+            ))?;
+            let objects = objects.ok_or(AndThenError::<I>::message_static_message(
                 "set_min_capacitance:objects",
-            )))?;
+            ))?;
             Ok(Command::SetMinCapacitance(SetMinCapacitance {
                 value,
                 objects,
@@ -4925,7 +4920,7 @@ where
 fn test_set_min_capacitance() {
     let mut parser = command();
     let tgt = "set_min_capacitance 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMinCapacitance(SetMinCapacitance {
             value: 0.1,
@@ -5009,8 +5004,7 @@ impl fmt::Display for SetMinDelay {
 fn set_min_delay<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_min_delay");
     let rise = symbol("-rise").map(|_| CommandArg::Rise);
@@ -5066,7 +5060,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut rise = false;
             let mut fall = false;
             let mut from = None;
@@ -5100,8 +5094,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value =
-                delay_value.ok_or(Error::Expected(Info::Borrowed("set_min_delay:delay_value")))?;
+            let delay_value = delay_value.ok_or(AndThenError::<I>::message_static_message(
+                "set_min_delay:delay_value",
+            ))?;
             Ok(Command::SetMinDelay(SetMinDelay {
                 rise,
                 fall,
@@ -5125,7 +5120,7 @@ where
 fn test_set_min_delay() {
     let mut parser = command();
     let tgt = "set_min_delay -rise -fall -from a -to a -through a -rise_from a -rise_to a -rise_through a -fall_from a -fall_to a -fall_through a -ignore_clock_latency -comment \"aaa\" 0.1";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMinDelay(SetMinDelay {
             rise: true,
@@ -5187,8 +5182,7 @@ impl fmt::Display for SetMinPorosity {
 fn set_min_porosity<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_min_porosity");
     let porosity_value = float().map(|x| CommandArg::Value(x));
@@ -5196,7 +5190,7 @@ where
     let args = (attempt(porosity_value), attempt(object_list));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut objects = None;
             for x in xs {
@@ -5206,10 +5200,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let porosity_value =
-                value.ok_or(Error::Expected(Info::Borrowed("set_min_porosity:value")))?;
-            let object_list =
-                objects.ok_or(Error::Expected(Info::Borrowed("set_min_porosity:objects")))?;
+            let porosity_value = value.ok_or(AndThenError::<I>::message_static_message(
+                "set_min_porosity:value",
+            ))?;
+            let object_list = objects.ok_or(AndThenError::<I>::message_static_message(
+                "set_min_porosity:objects",
+            ))?;
             Ok(Command::SetMinPorosity(SetMinPorosity {
                 porosity_value,
                 object_list,
@@ -5221,7 +5217,7 @@ where
 fn test_set_min_porosity() {
     let mut parser = command();
     let tgt = "set_min_porosity 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMinPorosity(SetMinPorosity {
             porosity_value: 0.1,
@@ -5265,8 +5261,7 @@ impl fmt::Display for SetMinPulseWidth {
 fn set_min_pulse_width<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_min_pulse_width");
     let low = symbol("-low").map(|_| CommandArg::Low);
@@ -5281,7 +5276,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut low = false;
             let mut high = false;
             let mut value = None;
@@ -5295,8 +5290,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value =
-                value.ok_or(Error::Expected(Info::Borrowed("set_min_pulse_width:value")))?;
+            let value = value.ok_or(AndThenError::<I>::message_static_message(
+                "set_min_pulse_width:value",
+            ))?;
             Ok(Command::SetMinPulseWidth(SetMinPulseWidth {
                 low,
                 high,
@@ -5310,7 +5306,7 @@ where
 fn test_set_min_pulse_width() {
     let mut parser = command();
     let tgt = "set_min_pulse_width -low -high 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMinPulseWidth(SetMinPulseWidth {
             low: true,
@@ -5408,8 +5404,7 @@ impl fmt::Display for SetMulticyclePath {
 fn set_multicycle_path<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_multicycle_path");
     let setup = symbol("-setup").map(|_| CommandArg::Setup);
@@ -5470,7 +5465,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut setup = false;
             let mut hold = false;
             let mut rise = false;
@@ -5510,9 +5505,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let path_multiplier = path_multiplier.ok_or(Error::Expected(Info::Borrowed(
-                "set_multicycle_path:path_multiplier",
-            )))?;
+            let path_multiplier = path_multiplier.ok_or(
+                AndThenError::<I>::message_static_message("set_multicycle_path:path_multiplier"),
+            )?;
             Ok(Command::SetMulticyclePath(SetMulticyclePath {
                 setup,
                 hold,
@@ -5539,7 +5534,7 @@ where
 fn test_set_multicycle_path() {
     let mut parser = command();
     let tgt = "set_multicycle_path -setup -hold -rise -fall -start -end -from a -to a -through a -rise_from a -rise_to a -rise_through a -fall_from a -fall_to a -fall_through a -comment \"aaa\" 0.1";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetMulticyclePath(SetMulticyclePath {
             setup: true,
@@ -5632,8 +5627,7 @@ impl fmt::Display for SetOperatingConditions {
 fn set_operating_conditions<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_operating_conditions");
     let library = symbol("-library")
@@ -5666,7 +5660,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut library = None;
             let mut analysis_type = None;
             let mut max = None;
@@ -5706,7 +5700,7 @@ fn test_set_operating_conditions() {
     let mut parser = command();
     let tgt =
         "set_operating_conditions -library a -analysis_type a -max a -min a -max_library a -min_library a -object_list a a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetOperatingConditions(SetOperatingConditions {
             library: Some(Object::String(ObjectString {
@@ -5796,8 +5790,7 @@ impl fmt::Display for SetOutputDelay {
 fn set_output_delay<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_output_delay");
     let clock = symbol("-clock")
@@ -5836,7 +5829,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut clock = None;
             let mut reference_pin = None;
             let mut clock_fall = false;
@@ -5868,12 +5861,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let delay_value = delay_value.ok_or(Error::Expected(Info::Borrowed(
+            let delay_value = delay_value.ok_or(AndThenError::<I>::message_static_message(
                 "set_output_delay:delay_value",
-            )))?;
-            let port_pin_list = port_pin_list.ok_or(Error::Expected(Info::Borrowed(
+            ))?;
+            let port_pin_list = port_pin_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_output_delay:port_pin_list",
-            )))?;
+            ))?;
             Ok(Command::SetOutputDelay(SetOutputDelay {
                 clock,
                 reference_pin,
@@ -5896,7 +5889,7 @@ where
 fn test_set_output_delay() {
     let mut parser = command();
     let tgt = "set_output_delay -clock a -reference_pin a -clock_fall -level_sensitive -rise -fall -max -min -add_delay -network_latency_included -source_latency_included 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetOutputDelay(SetOutputDelay {
             clock: Some(Object::String(ObjectString {
@@ -5945,8 +5938,7 @@ impl fmt::Display for SetPortFanoutNumber {
 fn set_port_fanout_number<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_port_fanout_number");
     let value = float().map(|x| CommandArg::Value(x));
@@ -5954,7 +5946,7 @@ where
     let args = (attempt(value), attempt(port_list));
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut value = None;
             let mut port_list = None;
             for x in xs {
@@ -5964,12 +5956,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.ok_or(Error::Expected(Info::Borrowed(
+            let value = value.ok_or(AndThenError::<I>::message_static_message(
                 "set_port_fanout_number:value",
-            )))?;
-            let port_list = port_list.ok_or(Error::Expected(Info::Borrowed(
+            ))?;
+            let port_list = port_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_port_fanout_number:port_list",
-            )))?;
+            ))?;
             Ok(Command::SetPortFanoutNumber(SetPortFanoutNumber {
                 value,
                 port_list,
@@ -5981,7 +5973,7 @@ where
 fn test_set_port_fanout_number() {
     let mut parser = command();
     let tgt = "set_port_fanout_number 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetPortFanoutNumber(SetPortFanoutNumber {
             value: 0.1,
@@ -6013,15 +6005,14 @@ impl fmt::Display for SetPropagatedClock {
 fn set_propagated_clock<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_propagated_clock");
     let object_list = parser(object).map(|x| CommandArg::Object(x));
     let args = (attempt(object_list),);
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut object_list = None;
             for x in xs {
                 match x {
@@ -6029,9 +6020,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let object_list = object_list.ok_or(Error::Expected(Info::Borrowed(
+            let object_list = object_list.ok_or(AndThenError::<I>::message_static_message(
                 "set_propagated_clock:object_list",
-            )))?;
+            ))?;
             Ok(Command::SetPropagatedClock(SetPropagatedClock {
                 object_list,
             }))
@@ -6042,7 +6033,7 @@ where
 fn test_set_propagated_clock() {
     let mut parser = command();
     let tgt = "set_propagated_clock a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetPropagatedClock(SetPropagatedClock {
             object_list: Object::String(ObjectString {
@@ -6083,8 +6074,7 @@ impl fmt::Display for SetResistance {
 fn set_resistance<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_resistance");
     let min = symbol("-min").map(|_| CommandArg::Min);
@@ -6099,7 +6089,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut min = false;
             let mut max = false;
             let mut value = None;
@@ -6113,9 +6103,12 @@ where
                     _ => unreachable!(),
                 }
             }
-            let value = value.ok_or(Error::Expected(Info::Borrowed("set_resistance:value")))?;
-            let net_list =
-                net_list.ok_or(Error::Expected(Info::Borrowed("set_resistance:net_list")))?;
+            let value = value.ok_or(AndThenError::<I>::message_static_message(
+                "set_resistance:value",
+            ))?;
+            let net_list = net_list.ok_or(AndThenError::<I>::message_static_message(
+                "set_resistance:net_list",
+            ))?;
             Ok(Command::SetResistance(SetResistance {
                 min,
                 max,
@@ -6129,7 +6122,7 @@ where
 fn test_set_resistance() {
     let mut parser = command();
     let tgt = "set_resistance -min -max 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetResistance(SetResistance {
             min: true,
@@ -6195,8 +6188,7 @@ impl fmt::Display for SetSense {
 fn set_sense<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_sense");
     let r#type = symbol("-type").with(item()).map(|x| CommandArg::Type(x));
@@ -6223,7 +6215,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut r#type = None;
             let mut non_unate = false;
             let mut positive = false;
@@ -6247,7 +6239,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let pin_list = pin_list.ok_or(Error::Expected(Info::Borrowed("set_sense:pin_list")))?;
+            let pin_list = pin_list.ok_or(AndThenError::<I>::message_static_message(
+                "set_sense:pin_list",
+            ))?;
             Ok(Command::SetSense(SetSense {
                 r#type,
                 non_unate,
@@ -6267,7 +6261,7 @@ fn test_set_sense() {
     let mut parser = command();
     let tgt =
         "set_sense -type clock -non_unate -positive -negative -clock_leaf -stop_propagation -pulse a -clocks clk pin";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetSense(SetSense {
             r#type: Some(String::from("clock")),
@@ -6360,8 +6354,7 @@ impl fmt::Display for SetTimingDerate {
 fn set_timing_derate<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_timing_derate");
     let cell_delay = symbol("-cell_delay").map(|_| CommandArg::CellDelay);
@@ -6396,7 +6389,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut cell_delay = false;
             let mut cell_check = false;
             let mut net_delay = false;
@@ -6430,9 +6423,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let derate_value = derate_value.ok_or(Error::Expected(Info::Borrowed(
+            let derate_value = derate_value.ok_or(AndThenError::<I>::message_static_message(
                 "set_timing_derate:derate_value",
-            )))?;
+            ))?;
             Ok(Command::SetTimingDerate(SetTimingDerate {
                 cell_delay,
                 cell_check,
@@ -6456,7 +6449,7 @@ where
 fn test_set_timing_derate() {
     let mut parser = command();
     let tgt = "set_timing_derate -cell_delay -cell_check -net_delay -data -clock -early -late -rise -fall -static -dynamic -increment 0.1 a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetTimingDerate(SetTimingDerate {
             cell_delay: true,
@@ -6539,8 +6532,7 @@ impl fmt::Display for UnitValue {
 fn unit_value<I>() -> impl Parser<Input = I, Output = UnitValue>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let unit_value = optional(float()).and(item()).map(|(x, y)| match x {
         Some(x) => UnitValue { value: x, unit: y },
@@ -6555,8 +6547,7 @@ where
 fn set_units<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = attempt(symbol("set_units")).or(symbol("set_unit"));
     let capacitance = symbol("-capacitance")
@@ -6587,7 +6578,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut capacitance = None;
             let mut resistance = None;
             let mut time = None;
@@ -6621,7 +6612,7 @@ fn test_set_units() {
     let mut parser = command();
     let tgt =
         "set_units -capacitance 1.2pF -resistance 10MOhm -time ns -voltage V -current mA -power mW";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetUnits(SetUnits {
             capacitance: Some(UnitValue {
@@ -6673,8 +6664,7 @@ impl fmt::Display for SetSdcVersion {
 fn set_sdc_version<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set").with(symbol("sdc_version"));
     let version = float().map(|x| Command::SetSdcVersion(SetSdcVersion { version: x }));
@@ -6685,7 +6675,7 @@ where
 fn test_set_sdc_version() {
     let mut parser = command();
     let tgt = "set sdc_version 2.1";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(Command::SetSdcVersion(SetSdcVersion { version: 2.1 }), ret);
     assert_eq!(tgt, format!("{}", ret));
 }
@@ -6717,8 +6707,7 @@ impl fmt::Display for SetVoltage {
 fn set_voltage<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_voltage");
     let min = symbol("-min").with(float()).map(|x| CommandArg::MinVal(x));
@@ -6733,7 +6722,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut min = None;
             let mut object_list = None;
             let mut max_case_voltage = None;
@@ -6745,9 +6734,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let max_case_voltage = max_case_voltage.ok_or(Error::Expected(Info::Borrowed(
-                "set_voltage:max_case_voltage",
-            )))?;
+            let max_case_voltage = max_case_voltage.ok_or(
+                AndThenError::<I>::message_static_message("set_voltage:max_case_voltage"),
+            )?;
             Ok(Command::SetVoltage(SetVoltage {
                 min,
                 object_list,
@@ -6760,7 +6749,7 @@ where
 fn test_set_voltage() {
     let mut parser = command();
     let tgt = "set_voltage -min 0.1 -object_list a 0.1";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetVoltage(SetVoltage {
             min: Some(0.1),
@@ -6793,15 +6782,14 @@ impl fmt::Display for SetWireLoadMinBlockSize {
 fn set_wire_load_min_block_size<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_wire_load_min_block_size");
     let size = float().map(|x| CommandArg::Value(x));
     let args = (attempt(size),);
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut size = None;
             for x in xs {
                 match x {
@@ -6809,9 +6797,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let size = size.ok_or(Error::Expected(Info::Borrowed(
+            let size = size.ok_or(AndThenError::<I>::message_static_message(
                 "set_wire_load_min_block_size:size",
-            )))?;
+            ))?;
             Ok(Command::SetWireLoadMinBlockSize(SetWireLoadMinBlockSize {
                 size,
             }))
@@ -6822,7 +6810,7 @@ where
 fn test_set_wire_load_min_block_size() {
     let mut parser = command();
     let tgt = "set_wire_load_min_block_size 0.1";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetWireLoadMinBlockSize(SetWireLoadMinBlockSize { size: 0.1 }),
         ret
@@ -6849,15 +6837,14 @@ impl fmt::Display for SetWireLoadMode {
 fn set_wire_load_mode<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_wire_load_mode");
     let mode_name = item().map(|x| CommandArg::String(x));
     let args = (attempt(mode_name),);
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut mode_name = None;
             for x in xs {
                 match x {
@@ -6865,9 +6852,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let mode_name = mode_name.ok_or(Error::Expected(Info::Borrowed(
+            let mode_name = mode_name.ok_or(AndThenError::<I>::message_static_message(
                 "set_wire_load_mode:mode_name",
-            )))?;
+            ))?;
             Ok(Command::SetWireLoadMode(SetWireLoadMode { mode_name }))
         })
 }
@@ -6876,7 +6863,7 @@ where
 fn test_set_wire_load_mode() {
     let mut parser = command();
     let tgt = "set_wire_load_mode a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetWireLoadMode(SetWireLoadMode {
             mode_name: String::from("a")
@@ -6921,8 +6908,7 @@ impl fmt::Display for SetWireLoadModel {
 fn set_wire_load_model<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_wire_load_model");
     let name = symbol("-name").with(item()).map(|x| CommandArg::Name(x));
@@ -6941,7 +6927,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut name = None;
             let mut library = None;
             let mut min = false;
@@ -6957,7 +6943,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let name = name.ok_or(Error::Expected(Info::Borrowed("set_wire_load_model:name")))?;
+            let name = name.ok_or(AndThenError::<I>::message_static_message(
+                "set_wire_load_model:name",
+            ))?;
             Ok(Command::SetWireLoadModel(SetWireLoadModel {
                 name,
                 library,
@@ -6972,7 +6960,7 @@ where
 fn test_set_wire_load_model() {
     let mut parser = command();
     let tgt = "set_wire_load_model -name a -library a -min -max a";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetWireLoadModel(SetWireLoadModel {
             name: String::from("a"),
@@ -7025,8 +7013,7 @@ impl fmt::Display for SetWireLoadSelectionGroup {
 fn set_wire_load_selection_group<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = symbol("set_wire_load_selection_group");
     let library = symbol("-library")
@@ -7045,7 +7032,7 @@ where
     );
     command
         .with(many(choice(args)))
-        .and_then::<_, _, Error<char, I::Range>, _>(|xs: Vec<_>| {
+        .and_then::<_, _, AndThenError<I>, _>(|xs: Vec<_>| {
             let mut library = None;
             let mut min = false;
             let mut max = false;
@@ -7061,9 +7048,9 @@ where
                     _ => unreachable!(),
                 }
             }
-            let group_name = group_name.ok_or(Error::Expected(Info::Borrowed(
+            let group_name = group_name.ok_or(AndThenError::<I>::message_static_message(
                 "set_wire_load_selection_group:group_name",
-            )))?;
+            ))?;
             Ok(Command::SetWireLoadSelectionGroup(
                 SetWireLoadSelectionGroup {
                     library,
@@ -7080,7 +7067,7 @@ where
 fn test_set_wire_load_selection_group() {
     let mut parser = command();
     let tgt = "set_wire_load_selection_group -library a -min -max a [all_clocks]";
-    let ret = parser.easy_parse(tgt).unwrap().0;
+    let ret = parser.parse(tgt).unwrap().0;
     assert_eq!(
         Command::SetWireLoadSelectionGroup(SetWireLoadSelectionGroup {
             library: Some(Object::String(ObjectString {
@@ -7101,8 +7088,7 @@ fn test_set_wire_load_selection_group() {
 fn unknown<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = many1(none_of("\n".chars())).map(|x| Command::Unknown(x));
     command
@@ -7113,8 +7099,7 @@ where
 fn whitespace<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
-    I::Error: ParseError<char, I::Range, I::Position>,
-    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let command = lex(space()).map(|_| Command::Whitespace);
     command

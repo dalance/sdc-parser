@@ -34,7 +34,7 @@ use std::marker::PhantomData;
 /// ```
 pub fn parse(s: &str) -> Sdc {
     let mut parser = sdc_parser();
-    parser.easy_parse(s).unwrap().0
+    parser.parse(s).unwrap().0
 }
 
 /// Parse SDC string strictly
@@ -59,11 +59,9 @@ pub fn parse(s: &str) -> Sdc {
 /// ```
 pub fn parse_strict(s: &str) -> Result<Sdc, Error> {
     let mut parser = sdc_parser_strict();
-    let (ret, rest) = parser.easy_parse(s).map_err::<combine::easy::Errors<
-        char,
-        &str,
-        combine::stream::PointerOffset,
-    >, _>(Into::into)?;
+    let (ret, rest) = parser
+        .parse(s)
+        .map_err::<combine::error::StringStreamError, _>(Into::into)?;
 
     if rest.is_empty() {
         Ok(ret)
@@ -90,7 +88,7 @@ pub enum ErrorKind {
 
 #[derive(Debug)]
 pub struct ParseError {
-    pub messages: Vec<String>,
+    pub message: String,
 }
 
 #[derive(Debug)]
@@ -148,16 +146,12 @@ impl From<Context<ErrorKind>> for Error {
 
 // -----------------------------------------------------------------------------
 
-impl From<combine::easy::Errors<char, &str, combine::stream::PointerOffset>> for Error {
-    fn from(error: combine::easy::Errors<char, &str, combine::stream::PointerOffset>) -> Error {
-        let mut messages = Vec::new();
-
-        for e in &error.errors {
-            messages.push(format!("{:?}", e))
-        }
+impl From<combine::error::StringStreamError> for Error {
+    fn from(error: combine::error::StringStreamError) -> Error {
+        let message = format!("{:?}", error);
 
         Error {
-            inner: Context::new(ErrorKind::Parse(ParseError { messages })),
+            inner: Context::new(ErrorKind::Parse(ParseError { message })),
         }
     }
 }
@@ -169,9 +163,7 @@ struct SdcParser<I>(PhantomData<fn(I) -> I>);
 impl<I> Parser for SdcParser<I>
 where
     I: Stream<Item = char>,
-    I::Error: combine::error::ParseError<char, I::Range, I::Position>,
-    <I::Error as combine::error::ParseError<char, I::Range, I::Position>>::StreamError:
-        From<::combine::easy::Error<char, I::Range>>,
+    I::Error: combine::error::ParseError<I::Item, I::Range, I::Position>,
 {
     type Input = I;
     type Output = Sdc;
@@ -198,9 +190,7 @@ struct SdcParserStrict<I>(PhantomData<fn(I) -> I>);
 impl<I> Parser for SdcParserStrict<I>
 where
     I: Stream<Item = char>,
-    I::Error: combine::error::ParseError<char, I::Range, I::Position>,
-    <I::Error as combine::error::ParseError<char, I::Range, I::Position>>::StreamError:
-        From<::combine::easy::Error<char, I::Range>>,
+    I::Error: combine::error::ParseError<I::Item, I::Range, I::Position>,
 {
     type Input = I;
     type Output = Sdc;
@@ -257,7 +247,7 @@ mod test {
                 let file = dbg!(file);
 
                 let mut parser = sdc_parser();
-                let ret = parser.easy_parse(State::new(buf.as_str()));
+                let ret = parser.parse(State::new(buf.as_str()));
 
                 assert!(ret.is_ok(), "Parse is failed at {:?}: {:?}", file, ret);
                 assert_eq!("", ret.unwrap().1.input, "Input is Remained at {:?}", file);
