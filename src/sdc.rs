@@ -274,7 +274,25 @@ where
     many1(command()).map(|x| Sdc { commands: x })
 }
 
+pub(crate) fn sdc_strict<I>() -> impl Parser<Input = I, Output = Sdc>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+{
+    many1(command_strict()).map(|x| Sdc { commands: x })
+}
+
 fn command<I>() -> impl Parser<Input = I, Output = Command>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<char, I::Range, I::Position>>::StreamError: From<Error<char, I::Range>>,
+{
+    choice((attempt(command_strict()), unknown()))
+}
+
+fn command_strict<I>() -> impl Parser<Input = I, Output = Command>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -382,7 +400,6 @@ where
         attempt(look_ahead(string("set_p")).with(choice(set_p))),
         attempt(look_ahead(string("set_w")).with(choice(set_w))),
         attempt(choice(set__)),
-        unknown(),
     ))
 }
 
