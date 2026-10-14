@@ -16,10 +16,10 @@ combine = "3.8.1"
 failure = "0.1.5"
 
 [build-dependencies]
-skeptic = "0.13"
+skeptic = "0.14"
 
 [dev-dependencies]
-skeptic = "0.13"
+skeptic = "0.14"
 walkdir = "2.2.7"
 
 [package.metadata.release]
